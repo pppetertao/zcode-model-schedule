@@ -1,0 +1,24 @@
+{
+  "name": "zcode-model-schedule",
+  "version": "0.1.0",
+  "type": "module",
+  "license": "MIT",
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "test": "node --test test/apply.test.mjs"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/pppetertao/zcode-model-schedule"
+  },
+  "keywords": [
+    "zcode",
+    "model",
+    "scheduler",
+    "launchd",
+    "macos",
+    "llm"
+  ]
+}

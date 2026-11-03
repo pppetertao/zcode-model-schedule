@@ -1,0 +1,24 @@
+{
+  "$schema": "zcode-model-schedule/v2",
+  "timezone": "Asia/Shanghai",
+  "target": {
+    "providerId": "account:your-plan-provider",
+    "modelId": "YOUR-MODEL",
+    "reasoningLevel": "max"
+  },
+  "agents": [
+    { "name": "implementer", "kind": "custom", "path": "~/.zcode/agents/implementer.md" },
+    { "name": "vision",      "kind": "custom", "path": "~/.zcode/agents/vision.md" },
+    { "name": "Explore",     "kind": "builtin" }
+  ],
+  "dayWindows": [
+    { "days": [1, 2, 3, 4, 5], "from": "08:50", "to": "23:10" }
+  ],
+  "availability": {
+    "enabled": false,
+    "endpoint": "https://zcode.z.ai/api/v1/zcode-plan/billing/current",
+    "provider": "builtin:your-provider-id",
+    "model": "model:your-model-id",
+    "timeout": 5000
+  }
+}

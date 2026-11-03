@@ -1,0 +1,8 @@
+logs/
+node-path
+state.json
+history.jsonl
+.apply.lock
+schedule.json
+node_modules/
+.DS_Store
