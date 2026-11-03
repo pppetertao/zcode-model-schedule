@@ -566,6 +566,74 @@ describe('acquireLock / releaseLock', () => {
     fs.writeFileSync(lockPath, `${process.pid}\n`, { mode: 0o644 });
     assert.throws(() => acquireLock(lockPath), (err) => err instanceof LockBusyError && err.code === 'LOCK_BUSY');
   });
+
+  // ── 锁竞态修复新增用例（spec 2026-11-03-lock-race §4 用例 1-8；无 sleep，锁文件直接构造）──
+  test('不可读+fresh（目录 EISDIR）→ LockBusyError 且目标不删除【旧代码 unlink 被吞 → open EISDIR crash】', () => {
+    const lockPath = makeTmpDir('lock-eisdir'); // 用目录本身当锁路径 → openSync('wx') EEXIST → readFileSync EISDIR
+    assert.throws(() => acquireLock(lockPath), (err) => err instanceof LockBusyError && err.code === 'LOCK_BUSY');
+    assert.equal(fs.existsSync(lockPath), true); // reap 不动 EISDIR → 目录仍在
+  });
+
+  test('不可读+陈旧（目录 EISDIR + mtime -11min）→ LockBusyError（reap 失败不 crash）', () => {
+    const lockPath = makeTmpDir('lock-eisdir-stale');
+    const oldTime = Date.now() - 660000; // 11 分钟前
+    fs.utimesSync(lockPath, new Date(oldTime), new Date(oldTime));
+    assert.throws(() => acquireLock(lockPath), (err) => err instanceof LockBusyError && err.code === 'LOCK_BUSY');
+    assert.equal(fs.existsSync(lockPath), true); // unlinkSync 对目录非 ENOENT → busy 而非 crash
+  });
+
+  test('空文件（0 字节）+fresh → LockBusyError 且文件仍在', () => {
+    const lockPath = path.join(makeTmpDir('lock-empty'), '.apply.lock');
+    fs.writeFileSync(lockPath, '', { mode: 0o644 });
+    assert.throws(() => acquireLock(lockPath), (err) => err instanceof LockBusyError && err.code === 'LOCK_BUSY');
+    assert.equal(fs.existsSync(lockPath), true);
+  });
+
+  test('非 JSON 内容 garbage +fresh → LockBusyError 且文件仍在', () => {
+    const lockPath = path.join(makeTmpDir('lock-garbage'), '.apply.lock');
+    fs.writeFileSync(lockPath, 'garbage\n', { mode: 0o644 });
+    assert.throws(() => acquireLock(lockPath), (err) => err instanceof LockBusyError && err.code === 'LOCK_BUSY');
+    assert.equal(fs.existsSync(lockPath), true);
+  });
+
+  test('非 JSON garbage + mtime >10min → 接管成功返回 token', () => {
+    const lockPath = path.join(makeTmpDir('lock-garbage-stale'), '.apply.lock');
+    fs.writeFileSync(lockPath, 'garbage\n', { mode: 0o644 });
+    const oldTime = Date.now() - 660000;
+    fs.utimesSync(lockPath, new Date(oldTime), new Date(oldTime));
+    const token = acquireLock(lockPath);
+    assert.equal(typeof token, 'string');
+    assert.ok(token.length > 0);
+    fs.unlinkSync(lockPath); // 卡 1 阶段 releaseLock 未改签名 → 直接 unlink 清理本用例自建的锁
+  });
+
+  test('JSON 锁（活 pid + foreign token）+fresh → LockBusyError', () => {
+    const lockPath = path.join(makeTmpDir('lock-json-live'), '.apply.lock');
+    const holder = { pid: process.pid, token: 'holder-token', startedAt: new Date().toISOString() };
+    fs.writeFileSync(lockPath, JSON.stringify(holder) + '\n', { mode: 0o644 });
+    assert.throws(() => acquireLock(lockPath), (err) => err instanceof LockBusyError && err.code === 'LOCK_BUSY');
+    assert.equal(fs.existsSync(lockPath), true);
+  });
+
+  test('JSON 锁（pid 99999 已死）+fresh → 解析 pid 判死接管【旧代码不解析 JSON pid → 误判 busy】', () => {
+    const lockPath = path.join(makeTmpDir('lock-json-dead'), '.apply.lock');
+    const staleHolder = { pid: 99999, token: 'dead-holder', startedAt: new Date().toISOString() };
+    fs.writeFileSync(lockPath, JSON.stringify(staleHolder) + '\n', { mode: 0o644 });
+    const token = acquireLock(lockPath);
+    assert.equal(typeof token, 'string');
+    fs.unlinkSync(lockPath);
+  });
+
+  test('JSON 锁（活 pid）+ mtime >10min → 陈旧接管返回 token', () => {
+    const lockPath = path.join(makeTmpDir('lock-json-stale'), '.apply.lock');
+    const holder = { pid: process.pid, token: 'stale-holder', startedAt: new Date().toISOString() };
+    fs.writeFileSync(lockPath, JSON.stringify(holder) + '\n', { mode: 0o644 });
+    const oldTime = Date.now() - 660000;
+    fs.utimesSync(lockPath, new Date(oldTime), new Date(oldTime));
+    const token = acquireLock(lockPath);
+    assert.equal(typeof token, 'string');
+    fs.unlinkSync(lockPath);
+  });
 });
 
 // ── Task 2 追加：state + availability ──
