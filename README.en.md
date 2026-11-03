@@ -51,7 +51,7 @@ cp schedule.example.json schedule.json
 # 2. Edit schedule.json: set target (provider/model/reasoning level) and the agents to manage
 #    (see Configuration below)
 
-# 3. Preview what would change (writes nothing)
+# 3. Preview what would change (writes no files except the logs/runs.jsonl run record)
 node apply.mjs --dry-run
 
 # 4. Check current state and availability
@@ -95,16 +95,18 @@ The agent `name` for `kind: "custom"` entries is also used in state snapshots an
 ### `apply.mjs`
 
 ```
-node apply.mjs [--config <path>] [--status] [--dry-run] [--force] [--if-due]
+node apply.mjs [--config <path>] [--status] [--dry-run] [--force] [--if-due] [--logs [-n <N>]] [--trigger <name>]
 ```
 
 | Flag | Behavior |
 |---|---|
 | `--config <path>` | Path to the schedule file. Default: `schedule.json` in the script's own directory. `~` is expanded. |
-| `--status` | Print timezone, current mode, desired mode, availability, and the active snapshot. Writes nothing. |
-| `--dry-run` | Print a JSON report `{ desiredMode, available, changes }` of what would change. Writes nothing. |
+| `--status` | Print timezone, current mode, desired mode, availability, and the active snapshot. Writes no files other than the `logs/runs.jsonl` run record. |
+| `--dry-run` | Print a JSON report `{ desiredMode, available, changes }` of what would change. Writes no files other than the `logs/runs.jsonl` run record. |
 | `--force` | Re-apply the target values even when nothing differs (target mode only; no-op otherwise). |
 | `--if-due` | Act only when the recorded mode differs from the desired mode. Used by launchd and the hook; prints `no mode change` otherwise. |
+| `--logs [-n <N>]` | Inspect run logs: print the latest N entries (default 10), newest first, as one-line summaries from `logs/runs.jsonl` (including the `.1` rotated file). The query itself does not append to the run log. |
+| `--trigger <name>` | Trigger annotation, stored in the run record's `trigger` field. launchd installs pass `launchd`, the SessionStart hook passes `hook`; default `manual`. |
 
 Exit codes:
 
@@ -152,8 +154,11 @@ All files below live in the project directory:
 | `state.json` | Current mode (`original`/`target`), `switchedAt`, the snapshot of pre-switch values, `lastCheck`. |
 | `history.jsonl` | One JSON line per switch/restore: `{ time, mode, reason: "switch"\|"restore", agents }`. |
 | `logs/` | `launchd.out.log` / `launchd.err.log` (launchd runs), `hook.out.log` / `hook.err.log` (SessionStart hook runs). |
+| `logs/runs.jsonl` | One JSON record appended per run (schema `zcode-model-schedule/run-log/v1`: time, trigger, window decision, availability, action, change details, duration, exit code); rotated to `runs.jsonl.1` at 1 MiB (one backup kept). Records contain only error types and codes — never API keys or error messages. |
 
 A corrupted `state.json` is treated as "not switched" (with a `[warn]` on stderr), so the tool self-heals by re-evaluating the schedule.
+
+After upgrading to a version with trigger annotations, re-run `node install.mjs` (launchd) and `node install.mjs --register-hook` (SessionStart hook) to update the `--trigger` arguments; existing installs that are not re-installed keep recording `manual`.
 
 ## Security notes
 

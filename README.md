@@ -51,7 +51,7 @@ cp schedule.example.json schedule.json
 # 2. 编辑 schedule.json：设置目标（provider/model/reasoning level）以及要管理的 agents
 #    （见下方 Configuration 部分）
 
-# 3. 预览将发生哪些更改（不写入任何文件）
+# 3. 预览将发生哪些更改（除写入 logs/runs.jsonl 运行记录外不写任何文件）
 node apply.mjs --dry-run
 
 # 4. 检查当前状态和可用性
@@ -95,16 +95,18 @@ node install.mjs
 ### `apply.mjs`
 
 ```
-node apply.mjs [--config <path>] [--status] [--dry-run] [--force] [--if-due]
+node apply.mjs [--config <path>] [--status] [--dry-run] [--force] [--if-due] [--logs [-n <N>]] [--trigger <name>]
 ```
 
 | Flag | Behavior |
 |---|---|
 | `--config <path>` | 日程文件路径。默认：脚本所在目录下的 `schedule.json`。`~` 会被展开。 |
-| `--status` | 打印时区、当前模式、期望模式、可用性以及当前快照。不写入任何文件。 |
-| `--dry-run` | 打印将要发生更改的 JSON 报告 `{ desiredMode, available, changes }`。不写入任何文件。 |
+| `--status` | 打印时区、当前模式、期望模式、可用性以及当前快照。除写入 `logs/runs.jsonl` 运行记录外不写任何文件。 |
+| `--dry-run` | 打印将要发生更改的 JSON 报告 `{ desiredMode, available, changes }`。除写入 `logs/runs.jsonl` 运行记录外不写任何文件。 |
 | `--force` | 即使没有差异也重新应用目标值（仅限目标模式；其他情况无操作）。 |
 | `--if-due` | 仅在记录的模式与期望模式不同时执行。由 launchd 和 hook 使用；否则打印 `no mode change`。 |
+| `--logs [-n <N>]` | 查询运行日志：按时间倒序打印最近 N 条（默认 10）单行摘要，来自 `logs/runs.jsonl`（含 `.1` 轮转份）。查询本身不写入运行日志。 |
+| `--trigger <name>` | 触发来源标注，写入运行记录的 `trigger` 字段。launchd 安装传 `launchd`，SessionStart hook 传 `hook`；缺省 `manual`。 |
 
 退出码：
 
@@ -152,8 +154,11 @@ plist、`node-path` 和 launchd 日志均相对于脚本自身目录解析，因
 | `state.json` | 当前模式（`original`/`target`）、`switchedAt`、预切换值的快照、`lastCheck`。 |
 | `history.jsonl` | 每次切换/恢复一行 JSON：`{ time, mode, reason: "switch"\|"restore", agents }`。 |
 | `logs/` | `launchd.out.log` / `launchd.err.log`（launchd 运行）、`hook.out.log` / `hook.err.log`（SessionStart hook 运行）。 |
+| `logs/runs.jsonl` | 每次运行追加一条 JSON 记录（schema `zcode-model-schedule/run-log/v1`：时间、触发源、窗口判定、可用性、action、变更明细、耗时、退出码）；达到 1 MiB 轮转为 `runs.jsonl.1`（保留一份）。记录只含错误类型与代码，绝不含 API key 或错误消息。 |
 
 损坏的 `state.json` 被视为"未切换"（stderr 上输出 `[warn]`），因此工具可通过重新评估日程自我修复。
+
+升级到带触发标注的版本后，重新运行 `node install.mjs`（launchd）与 `node install.mjs --register-hook`（SessionStart hook）以更新 `--trigger` 实参；未重装的存量触发在运行记录中仍标为 `manual`。
 
 ## Security notes
 
