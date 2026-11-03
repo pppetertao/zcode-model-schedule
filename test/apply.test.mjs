@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import {
   loadSchedule,
@@ -658,6 +658,48 @@ describe('acquireLock / releaseLock', () => {
   test('releaseLock(path) 缺 token → TypeError（签名契约）【旧代码不抛】', () => {
     const lockPath = path.join(makeTmpDir('lock-notoken'), '.apply.lock');
     assert.throws(() => releaseLock(lockPath), TypeError);
+  });
+
+  // ── 用例 12：原 1/25 flake 的确定性复现（spec §4 用例 12 / §Acceptance）──
+  // 子进程 monkey-patch fs.readFileSync：首次读到锁文件后在 read 与 stat 之间 unlink（模拟持有方释放），
+  // 旧实现 statSync ENOENT 未捕获 → child exit 1；新实现 gone → 重试 → 自持 → 自释 → exit 0
+  test('确定性竞态回归：持有方在 read 与 stat 之间释放 → acquireLock 重试自持（原 1/25 flake）', () => {
+    const dir = makeTmpDir('lock-race');
+    const lockPath = path.join(dir, '.apply.lock');
+    const childPath = path.join(dir, 'race-child.mjs');
+    const coreAbs = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', 'lib', 'apply-core.mjs');
+    const childSource = `// race-child.mjs — 竞态注入：模拟持有方在 acquireLock 的 read 与 stat 之间释放锁
+import fs from 'node:fs';
+const lockPath = ${JSON.stringify(lockPath)};
+const coreUrl = ${JSON.stringify(pathToFileURL(coreAbs).href)};
+const originalReadFileSync = fs.readFileSync;
+let injected = false; // 注入只触发一次：首次读到锁文件即删除，后续读（如 releaseLock 内部）不再干扰
+fs.readFileSync = function patchedReadFileSync(p, ...rest) {
+  const result = originalReadFileSync(p, ...rest);
+  if (!injected && p === lockPath) {
+    injected = true;
+    try { fs.unlinkSync(lockPath); } catch (e) { if (e.code !== 'ENOENT') throw e; } // 容忍 ENOENT：锁恰已被并发方删除正是被模拟的竞态终态；try 仅一条语句
+  }
+  return result;
+};
+const { acquireLock, releaseLock } = await import(coreUrl);
+const token = acquireLock(lockPath);
+if (typeof token !== 'string' || token.length === 0) {
+  console.error('acquireLock 未返回 token:', token);
+  process.exit(1);
+}
+if (releaseLock(lockPath, token) !== true) {
+  console.error('releaseLock 应返回 true');
+  process.exit(1);
+}
+`;
+    fs.writeFileSync(childPath, childSource, { mode: 0o644 });
+    // 预置活 JSON 锁（模拟真实持有方；pid=本测试进程，必活）
+    const holder = { pid: process.pid, token: 'holder-token', startedAt: new Date().toISOString() };
+    fs.writeFileSync(lockPath, JSON.stringify(holder) + '\n', { mode: 0o644 });
+    const r = spawnSync(process.execPath, [childPath], { encoding: 'utf8', timeout: 30000 });
+    assert.equal(r.status, 0, `child 应 exit 0, status=${r.status}, stderr=${r.stderr}`);
+    assert.equal(fs.existsSync(lockPath), false, 'child 释放后锁文件应不存在');
   });
 });
 
