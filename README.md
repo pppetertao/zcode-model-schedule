@@ -66,6 +66,22 @@ node install.mjs
 
 `node apply.mjs` 会立即执行切换；验证错误会以 `[invalid] <scope>: <reason>` 格式打印，退出码为 1。
 
+## Dashboard
+
+一个可选的本地只读 web dashboard，让你一眼看到当前模式、可用性、最近运行、切换历史、配置摘要，并支持手动触发一次 `apply --if-due`。
+
+```bash
+npm run dashboard        # 或：node dashboard.mjs --port <n>
+```
+
+启动后访问 **http://127.0.0.1:8787**。注意：**不会自动打开浏览器**，请在浏览器地址栏手动输入上面的地址。
+
+页面包含：当前模式、可用性、最近运行（最多 10 条）、切换历史（最多 10 条）、配置摘要、手动触发。
+
+- 手动触发按钮等价于 `node apply.mjs --if-due --trigger dashboard`，是幂等的（仅在模式真正需要改变时执行），不提供强制覆盖。
+- 仅监听本机 loopback（`127.0.0.1`），无认证、无 HTTPS。
+- 若端口 8787 已被占用，启动会报错退出；用 `--port <n>` 换一个端口即可。
+
 ## Configuration
 
 配置文件是项目根目录下的 `schedule.json`（参见 `schedule.example.json`）。`$schema` 必须为 `"zcode-model-schedule/v2"`。

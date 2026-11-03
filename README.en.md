@@ -66,6 +66,22 @@ node install.mjs
 
 `node apply.mjs` performs a switch immediately; validation errors are printed as `[invalid] <scope>: <reason>` with exit code 1.
 
+## Dashboard
+
+An optional local, read-only web dashboard that shows at a glance the current mode, availability, recent runs, switch history, and a config summary, and lets you manually trigger one `apply --if-due`.
+
+```bash
+npm run dashboard        # or: node dashboard.mjs --port <n>
+```
+
+Once started, open **http://127.0.0.1:8787** in your browser. Note: it does **not** open a browser automatically — type the address above into your browser's address bar.
+
+The page shows: current mode, availability, recent runs (up to 10), switch history (up to 10), a config summary, and a manual trigger button.
+
+- The manual trigger button is equivalent to `node apply.mjs --if-due --trigger dashboard`; it is idempotent (only acts when a mode change is actually due) and offers no forced override.
+- It listens only on the loopback interface (`127.0.0.1`), with no authentication and no HTTPS.
+- If port 8787 is already in use, startup fails with an error; pass `--port <n>` to use a different port.
+
 ## Configuration
 
 The config file is `schedule.json` in the project root (see `schedule.example.json`). `$schema` must be `"zcode-model-schedule/v2"`.
