@@ -60,6 +60,8 @@ export function generatePlist(schedule, nodePath, scriptPath, uid) {
     <string>${xmlEscape(nodePath)}</string>
     <string>${xmlEscape(scriptPath)}</string>
     <string>--if-due</string>
+    <string>--trigger</string>
+    <string>launchd</string>
   </array>
   <key>StartCalendarInterval</key>
   <array>

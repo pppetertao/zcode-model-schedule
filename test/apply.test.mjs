@@ -1687,11 +1687,12 @@ describe('generatePlist', () => {
     assert.match(xml, /<key>Weekday<\/key><integer>5<\/integer><key>Hour<\/key><integer>23<\/integer><key>Minute<\/key><integer>10<\/integer>/);
   });
 
-  test('StartInterval=300 + Label + ProgramArguments=[node, apply.mjs, --if-due] + 日志路径', () => {
+  test('StartInterval=300 + Label + ProgramArguments=[node, apply.mjs, --if-due, --trigger launchd] + 日志路径', () => {
     const xml = generatePlist(baseSchedule(), '/fake/node/bin/node', '/fake/tool/apply.mjs', 501);
     assert.match(xml, /<key>Label<\/key><string>com\.zcode\.model-schedule<\/string>/);
     assert.match(xml, /<key>StartInterval<\/key><integer>300<\/integer>/);
     assert.match(xml, /<string>\/fake\/node\/bin\/node<\/string>\n    <string>\/fake\/tool\/apply\.mjs<\/string>\n    <string>--if-due<\/string>/);
+    assert.match(xml, /<string>--if-due<\/string>\n    <string>--trigger<\/string>\n    <string>launchd<\/string>/);
     assert.match(xml, /<key>StandardOutPath<\/key><string>\/fake\/tool\/logs\/launchd\.out\.log<\/string>/);
     assert.match(xml, /<key>StandardErrorPath<\/key><string>\/fake\/tool\/logs\/launchd\.err\.log<\/string>/);
   });
