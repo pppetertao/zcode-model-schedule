@@ -7,7 +7,8 @@
     "node": ">=18"
   },
   "scripts": {
-    "test": "node --test test/apply.test.mjs"
+    "test": "node --test test/*.test.mjs",
+    "dashboard": "node dashboard.mjs"
   },
   "repository": {
     "type": "git",
