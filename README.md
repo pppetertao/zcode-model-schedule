@@ -1,43 +1,43 @@
-English | [简体中文](README.zh-CN.md)
+简体中文 | [English](README.en.md)
 
 # zcode-model-schedule
 
-Time-based model switching for [ZCode](https://zcode.ai): keep your coding-plan model at night and on weekends, and restore your everyday setup automatically during work hours.
+为 [ZCode](https://zcode.ai) 提供基于时间的模型切换：在夜间和周末使用你的计划内模型，并在工作时间内自动恢复日常配置。
 
-> **Disclaimer:** This is a personal, community tool. It is **not** an official ZCode project and is not affiliated with or endorsed by ZCode.
+> **免责声明：** 这是一个个人社区工具。**不是** ZCode 官方项目，与 ZCode 无隶属或背书关系。
 
 ## Features
 
-- **Scheduled switching** — a `dayWindows` schedule decides when to switch (outside the window) and when to restore (inside the window).
-- **Availability gate** — before switching to the target model, it can check your plan's billing endpoint and skip the switch when the plan is unavailable or expired.
-- **Snapshot restore** — your pre-switch model settings are captured once and restored byte-for-byte when the day window opens.
-- **Hot reload** — ZCode watches its own config files, so changes made by this tool take effect within ~1–2 seconds, no restart needed.
-- **Dual trigger** — a launchd agent fires at window boundaries (plus a 5-minute safety-net interval), and a ZCode `SessionStart` hook runs the tool on every session start.
-- **Idempotent and lock-protected** — repeated runs do nothing unless the mode actually changed; an exclusive lock with stale-lock detection prevents concurrent runs from corrupting state.
+- **定时切换** — `dayWindows` 日程决定何时切换（窗口外）以及何时恢复（窗口内）。
+- **可用性门禁** — 切换到目标模型之前，可以检查你计划的计费端点，当计划不可用或已过期时跳过切换。
+- **快照恢复** — 切换前的模型设置会被捕获一次，并在日窗口打开时逐字节还原。
+- **热重载** — ZCode 监听自身的配置文件，因此本工具所做的更改在约 1–2 秒内生效，无需重启。
+- **双触发** — launchd agent 在窗口边界（加上 5 分钟安全网间隔）触发，而 ZCode `SessionStart` hook 在每个会话启动时运行本工具。
+- **幂等且带锁保护** — 重复运行仅在模式真正改变时才执行；独占锁配合过期锁检测防止并发运行损坏状态。
 
 ## Requirements
 
-- **macOS** (scheduling uses launchd; the hook and `apply.mjs` also work without launchd)
+- **macOS**（调度使用 launchd；hook 和 `apply.mjs` 也可在不使用 launchd 的情况下工作）
 - **Node.js >= 18**
-- **ZCode** installed with at least one provider configured in `~/.zcode/v2/config.json`
-- For custom agents: agent definition files (e.g. `~/.zcode/agents/implementer.md`) with a YAML frontmatter containing `model:` and optionally `thoughtLevel:` lines
+- **ZCode** 已安装，且在 `~/.zcode/v2/config.json` 中至少配置了一个 provider
+- 对于自定义 agents：agent 定义文件（例如 `~/.zcode/agents/implementer.md`），其 YAML frontmatter 包含 `model:` 行以及可选的 `thoughtLevel:` 行
 
 ## How it works
 
-ZCode watches its own configuration files (`~/.zcode/v2/agents-state.json` and your custom agent `.md` files) and hot-reloads them within ~1–2 seconds of a change.
+ZCode 监听自身配置文件（`~/.zcode/v2/agents-state.json` 和你的自定义 agent `.md` 文件），并在变更发生后约 1–2 秒内热重载它们。
 
-`apply.mjs` evaluates the schedule on every run:
+`apply.mjs` 在每次运行时评估日程：
 
-1. **Outside the day window** (nights, weekends): if not already switched, it snapshots the current model settings, then points every configured agent at the **target** model — builtin agents via `builtInModelSelectionOverrides` in `~/.zcode/v2/agents-state.json`, custom agents by rewriting the `model:` / `thoughtLevel:` lines in their frontmatter.
-2. **Inside the day window** (your working hours): if a switch is active, it restores the snapshotted values exactly and clears the snapshot.
-3. If the desired mode is already active, it does nothing (idempotent). If availability checking is enabled and the plan is not usable, switching to target is skipped with a reason.
+1. **在日窗口之外**（夜间、周末）：如果尚未切换，它会先快照当前模型设置，然后将每个已配置的 agent 指向**目标**模型——内置 agent 通过 `~/.zcode/v2/agents-state.json` 中的 `builtInModelSelectionOverrides` 切换，自定义 agent 则重写其 frontmatter 中的 `model:` / `thoughtLevel:` 行。
+2. **在日窗口之内**（你的工作时间）：如果有切换处于活动状态，它会精确还原快照值并清除快照。
+3. 如果所需模式已经处于活动状态，则不做任何操作（幂等）。如果启用了可用性检查且计划不可用，则跳过切换到目标模式并附带原因。
 
-Triggers:
+触发方式：
 
-- **launchd** (`node install.mjs`): one calendar entry per window boundary (from/to of every `dayWindow`), plus `StartInterval=300` so a missed trigger (e.g. laptop asleep at the boundary) is caught within 5 minutes. Each run invokes `apply.mjs --if-due`.
-- **ZCode SessionStart hook** (`node install.mjs --register-hook`): runs `apply.mjs --if-due` when a session starts, so a machine that was off all night switches as soon as you start working.
+- **launchd**（`node install.mjs`）：每个窗口边界（每个 `dayWindow` 的进入/退出时间）各一个日历条目，另加 `StartInterval=300`，以便错过触发器（例如在边界时刻笔记本处于睡眠状态）能在 5 分钟内被捕获到。每次运行调用 `apply.mjs --if-due`。
+- **ZCode SessionStart hook**（`node install.mjs --register-hook`）：在会话启动时运行 `apply.mjs --if-due`，这样一台整夜关闭的机器会在你开始工作时立即切换。
 
-All state lives next to the scripts (the directory you cloned this repo into), so the tool can be installed anywhere.
+所有状态都保存在脚本旁边的目录中（你克隆此仓库的目录），因此该工具可以安装在任意位置。
 
 ## Quick start
 
@@ -45,50 +45,50 @@ All state lives next to the scripts (the directory you cloned this repo into), s
 git clone https://github.com/pppetertao/zcode-model-schedule.git
 cd zcode-model-schedule
 
-# 1. Create your config from the example
+# 1. 从示例创建你的配置
 cp schedule.example.json schedule.json
 
-# 2. Edit schedule.json: set target (provider/model/reasoning level) and the agents to manage
-#    (see Configuration below)
+# 2. 编辑 schedule.json：设置目标（provider/model/reasoning level）以及要管理的 agents
+#    （见下方 Configuration 部分）
 
-# 3. Preview what would change (writes nothing)
+# 3. 预览将发生哪些更改（不写入任何文件）
 node apply.mjs --dry-run
 
-# 4. Check current state and availability
+# 4. 检查当前状态和可用性
 node apply.mjs --status
 
-# 5. Register the SessionStart hook so every new ZCode session applies the schedule
+# 5. 注册 SessionStart hook，使每个新的 ZCode 会话都应用日程
 node install.mjs --register-hook
 
-# 6. (optional) Install the launchd agent for time-of-day switching without relying on session starts
+# 6.（可选）安装 launchd agent，实现基于时间的切换，无需依赖会话启动
 node install.mjs
 ```
 
-`node apply.mjs` performs a switch immediately; validation errors are printed as `[invalid] <scope>: <reason>` with exit code 1.
+`node apply.mjs` 会立即执行切换；验证错误会以 `[invalid] <scope>: <reason>` 格式打印，退出码为 1。
 
 ## Configuration
 
-The config file is `schedule.json` in the project root (see `schedule.example.json`). `$schema` must be `"zcode-model-schedule/v2"`.
+配置文件是项目根目录下的 `schedule.json`（参见 `schedule.example.json`）。`$schema` 必须为 `"zcode-model-schedule/v2"`。
 
 | Field | Type | Description |
 |---|---|---|
-| `timezone` | string | IANA timezone used to evaluate the schedule, e.g. `"Asia/Shanghai"`. |
-| `target.providerId` | string | Provider ID to switch to, e.g. `"account:your-plan-provider"`. Must exist in `~/.zcode/v2/config.json`. |
-| `target.modelId` | string | Model ID to switch to. Must be offered by that provider (or exist globally for `account:*` aliases). |
-| `target.reasoningLevel` | string | One of `low`, `medium`, `high`, `xhigh`, `max`; must be supported by the target model. |
-| `agents` | array | Agents to manage. Each entry: `{ "name": "...", "kind": "builtin" \| "custom", "path": "..." }`. |
-| `agents[].kind` | string | `builtin` — a ZCode builtin agent (switched via `agents-state.json`). `custom` — your own agent `.md` file (frontmatter lines rewritten). |
-| `agents[].path` | string | Custom agents only. Path to the `.md` file; `~` is expanded. Defaults to `~/.zcode/agents/<name>.md`. |
-| `dayWindows` | array | Windows during which your **original** setup is active. Outside any window the **target** model applies. |
-| `dayWindows[].days` | number[] | Weekdays as integers, `1=Mon` … `7=Sun`. |
-| `dayWindows[].from` / `.to` | string | `HH:MM` boundaries; `to` must be later than `from` (overnight windows are not supported; `to` itself is exclusive). |
-| `availability.enabled` | boolean | Master switch for the plan check. Set `false` to skip it entirely (treated as always available). |
-| `availability.endpoint` | string | Billing/plan URL to GET when enabled. |
-| `availability.provider` | string | Provider ID in `~/.zcode/v2/config.json` whose `options.apiKey` is used for the request. |
-| `availability.model` | string | Capability name that must appear in the active plan's entitlements for the switch to proceed. |
-| `availability.timeout` | number | Request timeout in milliseconds (positive integer). |
+| `timezone` | string | 用于评估日程的 IANA 时区，例如 `"Asia/Shanghai"`。 |
+| `target.providerId` | string | 要切换到的 Provider ID，例如 `"account:your-plan-provider"`。必须在 `~/.zcode/v2/config.json` 中存在。 |
+| `target.modelId` | string | 要切换到的 Model ID。必须由该 provider 提供（或全局存在于 `account:*` 别名中）。 |
+| `target.reasoningLevel` | string | 取值为 `low`、`medium`、`high`、`xhigh`、`max` 之一；必须被目标模型支持。 |
+| `agents` | array | 要管理的 Agents。每项格式：`{ "name": "...", "kind": "builtin" \| "custom", "path": "..." }`。 |
+| `agents[].kind` | string | `builtin` — ZCode 内置 agent（通过 `agents-state.json` 切换）。`custom` — 你自己的 agent `.md` 文件（重写 frontmatter 行）。 |
+| `agents[].path` | string | 仅自定义 agents。`.md` 文件路径；`~` 会被展开。默认为 `~/.zcode/agents/<name>.md`。 |
+| `dayWindows` | array | 你的**原始**配置处于活动状态的时段窗口。不在任何窗口内时应用**目标**模型。 |
+| `dayWindows[].days` | number[] | 星期几，整数表示，`1=Mon` … `7=Sun`。 |
+| `dayWindows[].from` / `.to` | string | `HH:MM` 边界；`to` 必须晚于 `from`（不支持跨夜窗口；`to` 本身为左开右闭）。 |
+| `availability.enabled` | boolean | 计划检查的主开关。设为 `false` 以完全跳过检查（视为始终可用）。 |
+| `availability.endpoint` | string | 启用时进行 GET 请求的计费/计划 URL。 |
+| `availability.provider` | string | `~/.zcode/v2/config.json` 中的 Provider ID，其 `options.apiKey` 用于请求。 |
+| `availability.model` | string | 必须出现在活跃计划的 entitlements 中的能力名称，切换才能继续。 |
+| `availability.timeout` | number | 请求超时时间，毫秒（正整数）。 |
 
-The agent `name` for `kind: "custom"` entries is also used in state snapshots and log lines; for `kind: "builtin"` it must match the builtin agent ID as it appears in `~/.zcode/v2/agents-state.json` (e.g. `Explore`).
+`kind: "custom"` 的 agent `name` 也用于状态快照和日志行；`kind: "builtin"` 的 agent `name` 必须与 `~/.zcode/v2/agents-state.json` 中出现的内置 agent ID 匹配（例如 `Explore`）。
 
 ## CLI reference
 
@@ -100,19 +100,19 @@ node apply.mjs [--config <path>] [--status] [--dry-run] [--force] [--if-due]
 
 | Flag | Behavior |
 |---|---|
-| `--config <path>` | Path to the schedule file. Default: `schedule.json` in the script's own directory. `~` is expanded. |
-| `--status` | Print timezone, current mode, desired mode, availability, and the active snapshot. Writes nothing. |
-| `--dry-run` | Print a JSON report `{ desiredMode, available, changes }` of what would change. Writes nothing. |
-| `--force` | Re-apply the target values even when nothing differs (target mode only; no-op otherwise). |
-| `--if-due` | Act only when the recorded mode differs from the desired mode. Used by launchd and the hook; prints `no mode change` otherwise. |
+| `--config <path>` | 日程文件路径。默认：脚本所在目录下的 `schedule.json`。`~` 会被展开。 |
+| `--status` | 打印时区、当前模式、期望模式、可用性以及当前快照。不写入任何文件。 |
+| `--dry-run` | 打印将要发生更改的 JSON 报告 `{ desiredMode, available, changes }`。不写入任何文件。 |
+| `--force` | 即使没有差异也重新应用目标值（仅限目标模式；其他情况无操作）。 |
+| `--if-due` | 仅在记录的模式与期望模式不同时执行。由 launchd 和 hook 使用；否则打印 `no mode change`。 |
 
-Exit codes:
+退出码：
 
 | Code | Meaning |
 |---|---|
-| `0` | Success — applied, no change needed, skipped (unavailable), skipped (`--if-due`), or dry run. |
-| `1` | Validation, argument, or runtime error (details on stderr, prefixed `[invalid]` or `[error]`). |
-| `2` | Lock busy — another `apply.mjs` run holds `.apply.lock`. |
+| `0` | 成功 — 已应用、无需更改、已跳过（不可用）、已跳过（`--if-due`）或干跑。 |
+| `1` | 验证、参数或运行时错误（详细信息在 stderr 上，以 `[invalid]` 或 `[error]` 前缀）。 |
+| `2` | 锁忙 — 另一个 `apply.mjs` 运行持有 `.apply.lock`。 |
 
 ### `install.mjs`
 
@@ -122,71 +122,71 @@ node install.mjs [--config <path>] [--dry-run] [--uninstall] [--register-hook]
 
 | Flag | Behavior |
 |---|---|
-| (no flags) | Full install: write `~/Library/LaunchAgents/com.zcode.model-schedule.plist`, record the current Node binary in `node-path`, and bootstrap the agent with `launchctl`. |
-| `--config <path>` | Schedule file used to generate the plist. Default: `schedule.json` in the script's own directory. |
-| `--dry-run` | Print the generated plist XML to stdout without writing or bootstrapping anything. |
-| `--uninstall` | Bootout the launchd agent and delete the plist (skipped gracefully if absent). |
-| `--register-hook` | Idempotently add the `SessionStart` hook entry to `~/.zcode/cli/config.json` (a timestamped backup is written before the first change). |
+| (no flags) | 完整安装：写入 `~/Library/LaunchAgents/com.zcode.model-schedule.plist`，在当前 Node 二进制路径记录到 `node-path`，并使用 `launchctl` 引导 agent。 |
+| `--config <path>` | 用于生成 plist 的日程文件。默认：脚本所在目录下的 `schedule.json`。 |
+| `--dry-run` | 将生成的 plist XML 打印到 stdout，不写入或引导任何内容。 |
+| `--uninstall` | 卸载 launchd agent 并删除 plist（如不存在则优雅跳过）。 |
+| `--register-hook` | 向 `~/.zcode/cli/config.json` 幂等地添加 `SessionStart` hook 条目（首次变更前会写入带时间戳的备份）。 |
 
-The plist, `node-path`, and launchd logs are all resolved relative to the script's own directory, so the project can live anywhere in your home directory.
+plist、`node-path` 和 launchd 日志均相对于脚本自身目录解析，因此项目可以放在家目录中的任意位置。
 
 ## Availability check
 
-When `availability.enabled` is `true`, `apply.mjs` gates the switch to target on a plan check:
+当 `availability.enabled` 为 `true` 时，`apply.mjs` 在切换到目标之前通过计划检查进行门控：
 
-1. Read the API key for `availability.provider` from `~/.zcode/v2/config.json` (`provider.<id>.options.apiKey`). The key is kept **in memory only** — it is never written to disk and never appears in logs or output.
-2. `GET availability.endpoint` with `Authorization: Bearer <apiKey>` and the configured timeout.
-3. Parse the response: find plans with `status: "active"` whose `[starts_at, ends_at)` window contains the server's `server_time`.
-4. Among those, require at least one plan whose `entitlements[].capabilities` includes `availability.model`.
+1. 从 `~/.zcode/v2/config.json` 读取 `availability.provider` 的 API key（`provider.<id>.options.apiKey`）。key **仅保留在内存中**——永远不会写入磁盘，也不会出现在日志或输出中。
+2. 使用 `Authorization: Bearer <apiKey>` 和配置的超时时间对 `GET availability.endpoint` 发起请求。
+3. 解析响应：查找 `status: "active"` 的计划，其 `[starts_at, ends_at)` 窗口包含服务器的 `server_time`。
+4. 在这些计划中，要求至少有一个计划的 `entitlements[].capabilities` 包含 `availability.model`。
 
-If any step fails, the switch is skipped (`apply.mjs` exits 0 and prints `skipped: <reason>`). Possible reasons: `http-error`, `non-200`, `no-active-plan`, `not-in-window`, `no-entitlement`, `timeout`, `parse-error`. With `enabled: false` the check is skipped entirely (reason `disabled`).
+如果任何步骤失败，切换将被跳过（`apply.mjs` 退出码 0 并打印 `skipped: <reason>`）。可能的原因：`http-error`、`non-200`、`no-active-plan`、`not-in-window`、`no-entitlement`、`timeout`、`parse-error`。当 `enabled: false` 时，整个检查被跳过（原因 `disabled`）。
 
-The default endpoint, `https://zcode.z.ai/api/v1/zcode-plan/billing/current`, is the ZCode plan billing API. If you use a different provider, point `endpoint` / `provider` / `model` at the equivalent values — or just disable the check.
+默认端点 `https://zcode.z.ai/api/v1/zcode-plan/billing/current` 是 ZCode 计划计费 API。如果你使用不同的 provider，请将 `endpoint` / `provider` / `model` 指向等效值——或者直接禁用检查。
 
 ## Logs & state
 
-All files below live in the project directory:
+以下所有文件都位于项目目录中：
 
 | File | Purpose |
 |---|---|
-| `state.json` | Current mode (`original`/`target`), `switchedAt`, the snapshot of pre-switch values, `lastCheck`. |
-| `history.jsonl` | One JSON line per switch/restore: `{ time, mode, reason: "switch"\|"restore", agents }`. |
-| `logs/` | `launchd.out.log` / `launchd.err.log` (launchd runs), `hook.out.log` / `hook.err.log` (SessionStart hook runs). |
+| `state.json` | 当前模式（`original`/`target`）、`switchedAt`、预切换值的快照、`lastCheck`。 |
+| `history.jsonl` | 每次切换/恢复一行 JSON：`{ time, mode, reason: "switch"\|"restore", agents }`。 |
+| `logs/` | `launchd.out.log` / `launchd.err.log`（launchd 运行）、`hook.out.log` / `hook.err.log`（SessionStart hook 运行）。 |
 
-A corrupted `state.json` is treated as "not switched" (with a `[warn]` on stderr), so the tool self-heals by re-evaluating the schedule.
+损坏的 `state.json` 被视为"未切换"（stderr 上输出 `[warn]`），因此工具可通过重新评估日程自我修复。
 
 ## Security notes
 
-- The API key is read from `~/.zcode/v2/config.json`, used only for the availability request header, and never persisted, logged, or echoed. Error paths deliberately log only the file path and error type.
-- File writes are atomic (temp file + rename) and preserve file permissions.
-- The tool modifies only these files:
-  - `~/.zcode/v2/agents-state.json` — keys inside `builtInModelSelectionOverrides` (other top-level keys are untouched);
-  - your custom agent `.md` files — only the `model:` / `thoughtLevel:` lines inside the YAML frontmatter;
-  - `~/.zcode/cli/config.json` — appends the hook entry, with a timestamped `.bak-<ISO>` backup before the first change.
-- No telemetry; the only outbound network call is the availability endpoint, and only when `availability.enabled` is `true`.
-- The tool runs with your user privileges (via launchd or the hook). Read the source before installing — it is small and dependency-free (Node built-ins only).
+- API key 从 `~/.zcode/v2/config.json` 读取，仅用于可用性请求头，永不持久化、记录或回显。错误路径刻意只记录文件路径和错误类型。
+- 文件写入是原子的（临时文件 + 重命名）并保留文件权限。
+- 工具仅修改以下文件：
+  - `~/.zcode/v2/agents-state.json` — `builtInModelSelectionOverrides` 内的键（其他顶层键不受影响）；
+  - 你的自定义 agent `.md` 文件 — 仅 YAML frontmatter 内的 `model:` / `thoughtLevel:` 行；
+  - `~/.zcode/cli/config.json` — 追加 hook 条目，首次变更前写入带时间戳的 `.bak-<ISO>` 备份。
+- 无遥测；唯一的出站网络调用是可用性端点，且仅在 `availability.enabled` 为 `true` 时。
+- 工具以你的用户权限运行（通过 launchd 或 hook）。安装前请阅读源码——代码量小且无外部依赖（仅使用 Node 内置模块）。
 
 ## Troubleshooting
 
-- **`[invalid] target: ...` / model not found** — `target.providerId` or `target.modelId` does not match `~/.zcode/v2/config.json`, or `target.reasoningLevel` is not in the model's supported list. Check the exact provider/model IDs in ZCode's config.
-- **`[invalid] agents[n]: custom agent "..." 文件不存在`** — the `.md` file for a custom agent is missing. Fix `agents[].path` or create the file (it needs a frontmatter with a `model:` line).
-- **`applied` fails with `[error] ... frontmatter`** — a custom agent file is missing its frontmatter markers or `model:` line. Repair the file and re-run; the pre-switch snapshot is preserved, so nothing is lost.
-- **Plan expired / `skipped: no-active-plan` / `skipped: not-in-window`** — the billing endpoint reports no active plan for now. The tool stays on your original setup; it will switch on a later trigger when the plan is usable again.
-- **Node path invalid after upgrading/moving Node** — launchd runs the binary recorded in `node-path`. Re-run `node install.mjs` to refresh it. The hook script falls back to `$NODE` or `node` from `PATH` when `node-path` is missing.
-- **Stale lock / exit code 2** — a previous run crashed while holding `.apply.lock`. The tool removes the lock automatically if it is older than 10 minutes or its owning process no longer exists. Otherwise, make sure no `apply.mjs` is running, then delete `.apply.lock`.
-- **ZCode changes its config format** — the tool depends on the current shape of `~/.zcode/v2/agents-state.json` and `~/.zcode/cli/config.json`. If a ZCode update changes those schemas, switching may fail or warn; check `logs/` for `[warn]` lines and open an issue.
+- **`[invalid] target: ...` / 模型未找到** — `target.providerId` 或 `target.modelId` 与 `~/.zcode/v2/config.json` 不匹配，或 `target.reasoningLevel` 不在模型的支持列表中。在 ZCode 的配置中检查确切的 provider/model ID。
+- **`[invalid] agents[n]: custom agent "..." 文件不存在`** — 自定义 agent 的 `.md` 文件缺失。修正 `agents[].path` 或创建该文件（需要包含 `model:` 行的 frontmatter）。
+- **`applied` 失败并显示 `[error] ... frontmatter`** — 自定义 agent 文件缺少 frontmatter 标记或 `model:` 行。修复文件后重新运行；预切换快照已保留，因此不会丢失任何内容。
+- **计划过期 / `skipped: no-active-plan` / `skipped: not-in-window`** — 计费端点当前未报告活跃计划。工具保持在你的原始配置上；当计划再次可用时，会在后续触发时切换。
+- **升级/移动 Node 后 Node 路径无效** — launchd 运行的是 `node-path` 中记录的二进制文件。重新运行 `node install.mjs` 以刷新它。当 `node-path` 缺失时，hook 脚本会回退到 `$NODE` 或 `PATH` 中的 `node`。
+- **过期锁 / 退出码 2** — 之前的运行在持有 `.apply.lock` 时崩溃。如果锁超过 10 分钟或其所属进程已不存在，工具会自动删除该锁。否则，确保没有 `apply.mjs` 在运行，然后手动删除 `.apply.lock`。
+- **ZCode 更改了配置格式** — 工具依赖于 `~/.zcode/v2/agents-state.json` 和 `~/.zcode/cli/config.json` 的当前结构。如果 ZCode 更新更改了这些 schema，切换可能会失败或发出警告；请检查 `logs/` 中的 `[warn]` 行并提交 issue。
 
 ## Uninstall
 
 ```bash
-# 1. Remove the launchd agent
+# 1. 移除 launchd agent
 node install.mjs --uninstall
 
-# 2. Remove the SessionStart hook: edit ~/.zcode/cli/config.json and delete the
-#    SessionStart entry whose command mentions model-schedule-apply.sh
-#    (a .bak-<timestamp> backup was created when the hook was first registered)
+# 2. 移除 SessionStart hook：编辑 ~/.zcode/cli/config.json 并删除
+#    command 中提到 model-schedule-apply.sh 的 SessionStart 条目
+#    （hook 首次注册时会创建 .bak-<timestamp> 备份）
 
-# 3. Delete the project directory (state.json, history.jsonl and logs/ live inside it)
+# 3. 删除项目目录（state.json、history.jsonl 和 logs/ 都在其中）
 ```
 
 ## License
