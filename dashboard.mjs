@@ -123,8 +123,9 @@ export function createRequestHandler(deps) {
         if (pathname === '/api/runs') {
           sendJson(res, 200, { schema: DASH_SCHEMA, runs: readRunLogs(deps.runLogPath, { limit }) });
         } else {
-          const all = readJsonlLinesLocal(deps.historyPath);
-          all.sort((a, b) => String(b.time ?? '').localeCompare(String(a.time ?? ''))); // 排序语义照 lib/run-log.mjs:67-69
+          const all = readJsonlLinesLocal(deps.historyPath)
+            .filter((r) => r !== null && typeof r === 'object') // 合法 JSON 值 null 也会被解析出来，先滤掉非对象行
+            .sort((a, b) => String(b?.time ?? '').localeCompare(String(a?.time ?? ''))); // 排序语义照 lib/run-log.mjs:67-69
           sendJson(res, 200, { schema: DASH_SCHEMA, history: all.slice(0, limit) });
         }
         return;

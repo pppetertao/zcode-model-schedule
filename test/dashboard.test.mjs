@@ -339,6 +339,21 @@ describe('dashboard HTTP handler', () => {
     assert.equal(JSON.parse(res2.body).runs.length, 10); // 非整数 → 回退 10
   });
 
+  test('/api/history 遇合法 JSON null 行 → 200 且过滤该行（不 500）', async () => {
+    const dir = makeTmpDir('http-history-null');
+    const paths = writeFullFixtures(dir);
+    fs.writeFileSync(paths.historyPath, [
+      JSON.stringify({ time: '2026-11-02T00:30:00.000Z', mode: 'target', reason: 'switch', agents: ['Explore'] }),
+      'null',
+      JSON.stringify({ time: '2026-11-01T00:30:00.000Z', mode: 'original', reason: 'restore', agents: ['Explore'] }),
+    ].join('\n') + '\n');
+    const res = await fire(createRequestHandler(httpDeps(paths)), 'GET', '/api/history');
+    assert.equal(res.statusCode, 200);
+    const body = JSON.parse(res.body);
+    assert.equal(body.history.length, 2);
+    assert.equal(body.history[0].reason, 'switch');
+  });
+
   test('用例18 GET /nope → 404 JSON；POST /api/status → 405 + Allow 头', async () => {
     const dir = makeTmpDir('http-404');
     const handler = createRequestHandler(httpDeps(writeFullFixtures(dir)));
