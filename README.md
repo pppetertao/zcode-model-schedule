@@ -1,3 +1,5 @@
+English | [简体中文](README.zh-CN.md)
+
 # zcode-model-schedule
 
 Time-based model switching for [ZCode](https://zcode.ai): keep your coding-plan model at night and on weekends, and restore your everyday setup automatically during work hours.
