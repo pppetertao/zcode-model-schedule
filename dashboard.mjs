@@ -71,7 +71,7 @@ export function runApplyIfDue({ toolDir, execFileImpl = execFile, timeoutMs = 60
   });
 }
 
-// createRequestHandler — 全依赖注入；deps = {configPath, statePath, historyPath, runLogPath, toolDir, now, spawnTrigger}
+// createRequestHandler — 全依赖注入；deps = {configPath, statePath, historyPath, runLogPath, now, spawnTrigger}
 export function createRequestHandler(deps) {
   let triggerInFlight = false;
   const data = () => buildDashboardData({
@@ -171,7 +171,6 @@ async function main() {
       statePath: STATE_PATH,
       historyPath: HISTORY_PATH,
       runLogPath: RUN_LOG_PATH,
-      toolDir: TOOL_DIR,
       now: () => new Date(),
       spawnTrigger: () => runApplyIfDue({ toolDir: TOOL_DIR }),
     }),

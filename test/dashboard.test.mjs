@@ -206,6 +206,7 @@ describe('buildDashboardData', () => {
     assert.equal(d.availability.enabled, null);
     assert.equal(d.availability.lastRunReason, null);
     assert.ok(renderDashboardPage(d).includes('暂无数据')); // Acceptance：降级页面显示「暂无数据」
+    assert.match(renderDashboardPage(d), /id="config-kv"/); // 降级页也必须有 #config-kv，否则客户端 fillKv 空引用
   });
 
   test('用例13 state.json 损坏 → corrupt=true、mode original；history 坏行跳过好行保留', () => {
@@ -242,6 +243,21 @@ describe('buildDashboardData', () => {
     assert.equal(d.runs.length, 1);
     assert.equal(d.runs[0].trigger, 'dashboard');
   });
+
+  test('窗口不变量违规（days 空 / 跨午夜）→ scheduleError 非空、窗口系字段 null', () => {
+    const dir = makeTmpDir('invariant');
+    const paths = writeFullFixtures(dir);
+    fs.writeFileSync(paths.configPath, JSON.stringify(baseSchedule({ dayWindows: [{ days: [], from: '08:50', to: '23:10' }] })));
+    let d = buildDashboardData({ ...paths, now: NOW_IN_WINDOW });
+    assert.match(d.scheduleError, /days 不能为空/);
+    assert.equal(d.inWindow, null);
+    assert.equal(d.nextSwitch, null);
+
+    fs.writeFileSync(paths.configPath, JSON.stringify(baseSchedule({ dayWindows: [{ days: [1], from: '23:00', to: '04:00' }] })));
+    d = buildDashboardData({ ...paths, now: NOW_IN_WINDOW });
+    assert.match(d.scheduleError, /不支持跨午夜窗口/);
+    assert.equal(d.activeWindow, null);
+  });
 });
 
 describe('renderDashboardPage', () => {
@@ -257,6 +273,7 @@ describe('renderDashboardPage', () => {
     for (const id of ['banners', 'clock', 'next-switch', 'mode', 'availability', 'runs', 'history', 'config-summary', 'trigger', 'initial-data']) {
       assert.ok(html.includes(`id="${id}"`), `missing id="${id}"`);
     }
+    assert.match(html, /id="config-kv"/);
     assert.equal(html.includes('<script>alert'), false); // 无裸注入
     assert.ok(html.includes('\\u003cscript>alert')); // 初始数据 JSON 通道转义
     assert.ok(html.includes('&lt;script&gt;alert(1)&lt;/script&gt;')); // 服务端渲染通道转义
@@ -289,7 +306,6 @@ function httpDeps(paths, overrides = {}) {
     statePath: paths.statePath,
     historyPath: paths.historyPath,
     runLogPath: paths.runLogPath,
-    toolDir: '/nonexistent-tool-dir', // 单测不 spawn 真实进程；runApplyIfDue 单独注入 fake execFileImpl
     now: () => new Date('2026-11-03T10:00:00+08:00'),
     spawnTrigger: async () => ({ ok: true, exitCode: 0, stdout: '', stderr: '' }),
     ...overrides,
