@@ -10,5 +10,5 @@ else
   NODE_BIN="${NODE:-node}"
 fi
 mkdir -p "$SCRIPT_DIR/logs"
-"$NODE_BIN" "$SCRIPT_DIR/apply.mjs" --if-due >>"$SCRIPT_DIR/logs/hook.out.log" 2>>"$SCRIPT_DIR/logs/hook.err.log" || true
+"$NODE_BIN" "$SCRIPT_DIR/apply.mjs" --if-due --trigger hook >>"$SCRIPT_DIR/logs/hook.out.log" 2>>"$SCRIPT_DIR/logs/hook.err.log" || true
 # 失败只记日志（hook.err.log），不阻断 session 启动

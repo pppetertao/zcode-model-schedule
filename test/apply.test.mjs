@@ -1775,7 +1775,7 @@ describe('hook script (model-schedule-apply.sh)', () => {
     return { toolDir, stubNode, stubLog };
   }
 
-  test('node-path 存在 → 用该 node 执行 apply.mjs --if-due，logs 目录自动创建', () => {
+  test('node-path 存在 → 用该 node 执行 apply.mjs --if-due --trigger hook，logs 目录自动创建', () => {
     const dir = makeTmpDir('hookrun');
     const { toolDir, stubNode, stubLog } = setupFakeTool(dir);
     fs.writeFileSync(path.join(toolDir, 'node-path'), `${stubNode}\n`);
@@ -1783,6 +1783,7 @@ describe('hook script (model-schedule-apply.sh)', () => {
     const logged = fs.readFileSync(stubLog, 'utf8');
     assert.match(logged, /apply\.mjs/);
     assert.match(logged, /--if-due/);
+    assert.match(logged, /--trigger hook/);
     assert.ok(fs.existsSync(path.join(toolDir, 'logs', 'hook.out.log')));
     assert.ok(fs.existsSync(path.join(toolDir, 'logs', 'hook.err.log')));
   });
