@@ -154,11 +154,11 @@ All files below live in the project directory:
 | `state.json` | Current mode (`original`/`target`), `switchedAt`, the snapshot of pre-switch values, `lastCheck`. |
 | `history.jsonl` | One JSON line per switch/restore: `{ time, mode, reason: "switch"\|"restore", agents }`. |
 | `logs/` | `launchd.out.log` / `launchd.err.log` (launchd runs), `hook.out.log` / `hook.err.log` (SessionStart hook runs). |
-| `logs/runs.jsonl` | One JSON record appended per run (schema `zcode-model-schedule/run-log/v1`: time, trigger, window decision, availability, action, change details, duration, exit code); rotated to `runs.jsonl.1` at 1 MiB (one backup kept). Records contain only error types and codes — never API keys or error messages. |
+| `logs/runs.jsonl` | One JSON record appended per run (schema `zcode-model-schedule/run-log/v1`: time, trigger, window decision, availability, action, change details, duration, exit code); rotated to `runs.jsonl.1` at 1 MiB (one backup kept). The `error` field contains only error types and codes — never API keys or error messages; failed `changes` entries may carry a short read-error summary (no credentials). |
 
 A corrupted `state.json` is treated as "not switched" (with a `[warn]` on stderr), so the tool self-heals by re-evaluating the schedule.
 
-After upgrading to a version with trigger annotations, re-run `node install.mjs` (launchd) and `node install.mjs --register-hook` (SessionStart hook) to update the `--trigger` arguments; existing installs that are not re-installed keep recording `manual`.
+After upgrading to a version with trigger annotations, re-run `node install.mjs` so the launchd plist carries `--trigger launchd` (plists that are not re-installed keep recording `manual`); the SessionStart hook needs no re-registration — updating the tool directory is enough, since `hooks/model-schedule-apply.sh` carries `--trigger hook` itself.
 
 ## Security notes
 

@@ -154,11 +154,11 @@ plist、`node-path` 和 launchd 日志均相对于脚本自身目录解析，因
 | `state.json` | 当前模式（`original`/`target`）、`switchedAt`、预切换值的快照、`lastCheck`。 |
 | `history.jsonl` | 每次切换/恢复一行 JSON：`{ time, mode, reason: "switch"\|"restore", agents }`。 |
 | `logs/` | `launchd.out.log` / `launchd.err.log`（launchd 运行）、`hook.out.log` / `hook.err.log`（SessionStart hook 运行）。 |
-| `logs/runs.jsonl` | 每次运行追加一条 JSON 记录（schema `zcode-model-schedule/run-log/v1`：时间、触发源、窗口判定、可用性、action、变更明细、耗时、退出码）；达到 1 MiB 轮转为 `runs.jsonl.1`（保留一份）。记录只含错误类型与代码，绝不含 API key 或错误消息。 |
+| `logs/runs.jsonl` | 每次运行追加一条 JSON 记录（schema `zcode-model-schedule/run-log/v1`：时间、触发源、窗口判定、可用性、action、变更明细、耗时、退出码）；达到 1 MiB 轮转为 `runs.jsonl.1`（保留一份）。`error` 字段只含错误类型与代码，不含 API key 与错误消息；`changes` 中的失败项可能带一句读取错误摘要（不含凭据）。 |
 
 损坏的 `state.json` 被视为"未切换"（stderr 上输出 `[warn]`），因此工具可通过重新评估日程自我修复。
 
-升级到带触发标注的版本后，重新运行 `node install.mjs`（launchd）与 `node install.mjs --register-hook`（SessionStart hook）以更新 `--trigger` 实参；未重装的存量触发在运行记录中仍标为 `manual`。
+升级到带触发标注的版本后，launchd 侧需重新运行 `node install.mjs` 以更新 plist 中的 `--trigger launchd` 实参（未重装的 plist 在运行记录中仍标为 `manual`）；SessionStart hook 无需重新注册，更新工具目录后 `hooks/model-schedule-apply.sh` 自带 `--trigger hook`。
 
 ## Security notes
 
