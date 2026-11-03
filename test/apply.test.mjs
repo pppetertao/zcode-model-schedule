@@ -1059,6 +1059,11 @@ function assertFilesUntouched(before) {
   }
 }
 
+// 按序读取 runs.jsonl 全部记录（append-only，文件序 = 时间序）
+function readRunRecords(runsLogPath) {
+  return fs.readFileSync(runsLogPath, 'utf8').trim().split('\n').map((line) => JSON.parse(line));
+}
+
 function setupE2E({ dayWindows, availability, timezone } = {}) {
   const home = makeTmpDir('e2e-home');
   // 沙箱把工具放在任意目录（刻意避开 ~/.zcode/tools/model-schedule）：
@@ -1107,8 +1112,9 @@ function setupE2E({ dayWindows, availability, timezone } = {}) {
   const statePath = path.join(toolDir, 'state.json');
   const historyPath = path.join(toolDir, 'history.jsonl');
   const lockPath = path.join(toolDir, '.apply.lock');
-  const watched = [agentsStatePath, implementerMd, visionMd, statePath, historyPath];
-  return { home, toolDir, schedulePath, agentsStatePath, statePath, historyPath, lockPath, implementerMd, visionMd, watched, ORIGINAL_MODEL };
+  const runsLogPath = path.join(toolDir, 'logs', 'runs.jsonl');
+  const watched = [agentsStatePath, implementerMd, visionMd, statePath, historyPath]; // runs.jsonl 刻意不入 watched：它按设计每次运行都会写
+  return { home, toolDir, schedulePath, agentsStatePath, statePath, historyPath, lockPath, runsLogPath, implementerMd, visionMd, watched, ORIGINAL_MODEL };
 }
 
 // 选取当前本地时间距午夜 >4 分钟的时区，构造「运行时刻必在窗口内」的白日窗（确定性，无时钟竞态）
@@ -1164,7 +1170,7 @@ function runConcurrent(toolDir, home, argCount = 2) {
 }
 
 describe('apply.mjs E2E（子进程 + HOME 沙箱）', () => {
-  test('--status：打印 current/desired mode + availability，exit 0，不写任何文件', () => {
+  test('--status：打印 current/desired mode + availability，exit 0；state/history/lock 三路径不落盘', () => {
     const e = setupE2E({ dayWindows: [] }); // dayWindows=[] → 恒 target 窗
     const r = runApply(e.toolDir, e.home, ['--status']);
     assert.equal(r.status, 0);
@@ -1174,6 +1180,11 @@ describe('apply.mjs E2E（子进程 + HOME 沙箱）', () => {
     assert.equal(fs.existsSync(e.statePath), false);
     assert.equal(fs.existsSync(e.historyPath), false);
     assert.equal(fs.existsSync(e.lockPath), false);
+    const recs = readRunRecords(e.runsLogPath);
+    assert.equal(recs.length, 1);
+    assert.equal(recs[0].action, 'status');
+    assert.equal(recs[0].exitCode, 0);
+    assert.equal(recs[0].availability, 'disabled');
   });
 
   test('非法 target 三元组 → [invalid] + exit 1 + 目标文件零修改（mtime 前后对比）', () => {
@@ -1212,6 +1223,21 @@ describe('apply.mjs E2E（子进程 + HOME 沙箱）', () => {
     assert.equal(rec.reason, 'switch');
     assert.deepEqual(rec.agents, ['implementer', 'vision', 'Explore']);
     assert.ok(!Number.isNaN(Date.parse(rec.time)));
+    // run-log：恰好 1 行，结构化字段齐备（run-log/v1）
+    const runRecs = readRunRecords(e.runsLogPath);
+    assert.equal(runRecs.length, 1);
+    assert.equal(runRecs[0].schema, 'zcode-model-schedule/run-log/v1');
+    assert.equal(runRecs[0].trigger, 'manual');
+    assert.equal(runRecs[0].action, 'applied');
+    assert.equal(runRecs[0].exitCode, 0);
+    assert.equal(runRecs[0].desiredMode, 'target');
+    assert.equal(runRecs[0].inWindow, false); // dayWindows=[] → 恒 target 窗
+    assert.equal(runRecs[0].stateMode, 'original'); // fresh state → emptyState().mode
+    assert.ok(Array.isArray(runRecs[0].changes) && runRecs[0].changes.length >= 4);
+    assert.ok(runRecs[0].durationMs >= 0);
+    assert.ok(!Number.isNaN(Date.parse(runRecs[0].time)));
+    assert.equal(runRecs[0].error, null); // 成功路径 error=null（无 message 泄露面）
+    assert.match(r.stdout, /applied mode=target/); // 控制台输出原样（G2）
   });
 
   test('幂等：同 mode 二次运行 → no change + exit 0 + 文件零修改', () => {
@@ -1240,6 +1266,14 @@ describe('apply.mjs E2E（子进程 + HOME 沙箱）', () => {
     assert.ok(!r.stdout.includes('msched-e2e-secret-9f2'), 'stdout 泄露 apiKey');
     assert.ok(!r.stderr.includes('msched-e2e-secret-9f2'), 'stderr 泄露 apiKey');
     assertFilesUntouched(before);
+    // run-log：action=skipped + avail.reason；runs.jsonl 全文不含 apiKey
+    const skipRecs = readRunRecords(e.runsLogPath);
+    assert.equal(skipRecs.length, 1);
+    assert.equal(skipRecs[0].action, 'skipped');
+    assert.equal(skipRecs[0].exitCode, 0);
+    assert.equal(skipRecs[0].availability, 'http-error'); // 127.0.0.1:9 连接拒绝 → http-error
+    const rawLog = fs.readFileSync(e.runsLogPath, 'utf8');
+    assert.ok(!rawLog.includes('msched-e2e-secret-9f2'), 'runs.jsonl 泄露 apiKey');
   });
 
   test('original 恢复：同一沙箱内先切 target → 改 schedule 为恒白日窗 → 逐字节还原 + snapshot=null（F3 真实往返）', () => {
@@ -1316,6 +1350,12 @@ describe('apply.mjs E2E（子进程 + HOME 沙箱）', () => {
     assert.equal(r2.status, 0);
     assert.match(r2.stdout, /no mode change/);
     assertFilesUntouched(before);
+    // run-log：第 1 行 applied、第 2 行 if-due-skip（append-only，文件序 = 时间序）
+    const dueRecs = readRunRecords(e.runsLogPath);
+    assert.equal(dueRecs.length, 2);
+    assert.equal(dueRecs[0].action, 'applied');
+    assert.equal(dueRecs[1].action, 'if-due-skip');
+    assert.equal(dueRecs[1].exitCode, 0);
   });
 
   // ── F2：失败重跑回归测试 ──
@@ -1363,6 +1403,16 @@ describe('apply.mjs E2E（子进程 + HOME 沙箱）', () => {
     assert.deepEqual(state1.snapshot.Explore, { providerId: 'magpie', modelId: 'group/flash', options: { reasoningLevel: 'max' } });
     assert.deepEqual(state1.snapshot.implementer, { model: e.ORIGINAL_MODEL, thoughtLevel: 'max' });
     assert.deepEqual(state1.snapshot.vision, { model: e.ORIGINAL_MODEL, thoughtLevel: 'max' });
+
+    // run-log：exit 1 → 记录 exitCode=1 + error.type=runtime，且 error 无 message 字段（G4）
+    const recsAfterFail = readRunRecords(e.runsLogPath);
+    assert.equal(recsAfterFail.length, 2); // r0 成功 + r1 失败
+    const failRec = recsAfterFail[1];
+    assert.equal(failRec.exitCode, 1);
+    assert.equal(failRec.error.type, 'runtime');
+    assert.equal('message' in failRec.error, false);
+    assert.equal(failRec.action, null); // exitCode≠0 → action=null
+    assert.equal(failRec.trigger, 'manual');
 
     // Step 2：修复 implementer.md → 再跑 → snapshot 不变
     fs.writeFileSync(e.implementerMd, implContent, { mode: 0o644 });
@@ -1508,6 +1558,12 @@ describe('apply.mjs E2E（子进程 + HOME 沙箱）', () => {
     const idx = result.stdouts.findIndex((s) => !s.includes('applied mode=target'));
     assert.ok(result.stdouts[idx].includes('no change') || result.stderrs[idx].includes('[locked]'),
       `另一进程预期 no change 或 [locked], stdout="${result.stdouts[idx].trim()}", stderr="${result.stderrs[idx].trim()}"`);
+    // run-log：双进程各落 1 行（O_APPEND 单次 write 不交错）；一行 exit 0、另一行 0 或 2
+    const concRecs = readRunRecords(e.runsLogPath);
+    assert.equal(concRecs.length, 2);
+    const recCodes = concRecs.map((rec) => rec.exitCode);
+    assert.ok(recCodes.includes(0), `至少一行 exit 0, got ${recCodes}`);
+    assert.ok(recCodes.every((c) => c === 0 || c === 2), `所有记录退出码合法: ${recCodes}`);
   });
 
   test('并发 ×3 轮（每轮新 sandbox）提高真实交错概率 + snapshot 不变量', async () => {
@@ -1545,6 +1601,12 @@ describe('apply.mjs E2E（子进程 + HOME 沙箱）', () => {
     assert.ok(Array.isArray(payload.changes) && payload.changes.length >= 4);
     assert.ok(payload.changes.every((c) => 'agent' in c && 'field' in c && 'old' in c && 'new' in c));
     assertFilesUntouched(before);
+    // run-log：action=dry-run + 变更明细与 stdout JSON 同源；watched 断言不变（runs.jsonl 不在 watched）
+    const dryRecs = readRunRecords(e.runsLogPath);
+    assert.equal(dryRecs.length, 1);
+    assert.equal(dryRecs[0].action, 'dry-run');
+    assert.equal(dryRecs[0].exitCode, 0);
+    assert.ok(Array.isArray(dryRecs[0].changes) && dryRecs[0].changes.length >= 4);
   });
 
   test('--force（已 target 态）→ 强制重写（mtime 变化）+ exit 0', () => {
@@ -1558,6 +1620,56 @@ describe('apply.mjs E2E（子进程 + HOME 沙箱）', () => {
     for (const p of targets) {
       assert.ok(fs.statSync(p).mtimeMs > before[p], `--force 未重写: ${p}`);
     }
+  });
+
+  test('--trigger launchd → 记录 trigger=launchd（launchd/hook 标注通道）', () => {
+    const e = setupE2E({ dayWindows: [] });
+    const r = runApply(e.toolDir, e.home, ['--trigger', 'launchd']);
+    assert.equal(r.status, 0);
+    assert.match(r.stdout, /applied mode=target/);
+    const recs = readRunRecords(e.runsLogPath);
+    assert.equal(recs.length, 1);
+    assert.equal(recs[0].trigger, 'launchd');
+    assert.equal(recs[0].action, 'applied');
+  });
+
+  test('--logs：单行摘要逐条输出（最新在前）；-n 1 → 仅最新 1 条；查询本身不写 run-log', () => {
+    const e = setupE2E({ dayWindows: [] });
+    runApply(e.toolDir, e.home, ['--trigger', 'hook']); // 第 1 条：applied（trigger=hook）
+    runApply(e.toolDir, e.home, ['--if-due']); // 第 2 条：if-due-skip（trigger=manual，最新）
+    const r = runApply(e.toolDir, e.home, ['--logs']);
+    assert.equal(r.status, 0);
+    const outLines = r.stdout.trim().split('\n');
+    assert.equal(outLines.length, 2);
+    assert.match(outLines[0], /action=if-due-skip/); // 降序：最新在前
+    assert.match(outLines[0], /\] manual /); // 摘要格式 [<time>] <trigger> ...（trigger 为裸值，非 trigger= 形态）
+    assert.match(outLines[0], /exit=0/);
+    assert.match(outLines[1], /action=applied/);
+    assert.match(outLines[1], /\] hook /);
+    const r1 = runApply(e.toolDir, e.home, ['--logs', '-n', '1']);
+    assert.equal(r1.status, 0);
+    const oneLine = r1.stdout.trim().split('\n');
+    assert.equal(oneLine.length, 1);
+    assert.match(oneLine[0], /action=if-due-skip/);
+    assert.equal(fs.readFileSync(e.runsLogPath, 'utf8').trim().split('\n').length, 2, '--logs 查询本身不追加记录');
+  });
+
+  test('--logs 无记录 → no runs logged yet + exit 0，且不创建 runs.jsonl', () => {
+    const e = setupE2E({ dayWindows: [] });
+    const r = runApply(e.toolDir, e.home, ['--logs']);
+    assert.equal(r.status, 0);
+    assert.match(r.stdout, /no runs logged yet/);
+    assert.equal(fs.existsSync(e.runsLogPath), false);
+  });
+
+  test('--logs 先于 loadSchedule：schedule 损坏也能查日志', () => {
+    const e = setupE2E({ dayWindows: [] });
+    runApply(e.toolDir, e.home); // 先落一条成功记录
+    fs.writeFileSync(e.schedulePath, 'not-json{{{', { mode: 0o644 });
+    const r = runApply(e.toolDir, e.home, ['--logs']);
+    assert.equal(r.status, 0); // 若 --logs 在 loadSchedule 之后处理，这里会 exit 1（锁死分支次序回归）
+    assert.match(r.stdout, /action=applied/);
+    assert.equal(fs.readFileSync(e.runsLogPath, 'utf8').trim().split('\n').length, 1, '查询运行不追加记录');
   });
 });
 
