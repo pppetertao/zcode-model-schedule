@@ -1205,7 +1205,17 @@ function setupE2E({ dayWindows, availability, timezone } = {}) {
   // CLI DEFAULT_CONFIG 必须按脚本自身目录解析（apply.mjs/import.meta.url），与 $HOME 布局无关
   const toolDir = path.join(home, 'apps', 'zcode-model-schedule');
   fs.mkdirSync(path.dirname(toolDir), { recursive: true });
-  fs.cpSync(TOOL_ROOT, toolDir, { recursive: true }); // STATE_PATH/HISTORY_PATH/LOCK_PATH 随 TOOL_DIR 落沙箱
+  // 只复制源码与测试所需文件，排除真实运行时产物（logs/state/history/lock）与无关大目录（.git/node_modules/.worktrees）
+  // filter 用相对路径判定：根目录自身放行，命中排除清单的路径整棵子树跳过（cpSync 递归时目录被拦截即不进入）
+  const EXCLUDED = new Set(['logs', 'state.json', 'history.jsonl', '.apply.lock', '.git', 'node_modules', '.worktrees']);
+  fs.cpSync(TOOL_ROOT, toolDir, {
+    recursive: true,
+    filter: (src) => {
+      const rel = path.relative(TOOL_ROOT, src);
+      if (rel === '') return true; // 根目录自身必须放行
+      return !EXCLUDED.has(rel.split(path.sep)[0]);
+    },
+  }); // STATE_PATH/HISTORY_PATH/LOCK_PATH 随 TOOL_DIR 落沙箱（沙箱内新建，非复制）
   const v2Dir = path.join(home, '.zcode', 'v2');
   fs.mkdirSync(v2Dir, { recursive: true });
   const agentsStatePath = path.join(v2Dir, 'agents-state.json');
@@ -1249,6 +1259,8 @@ function setupE2E({ dayWindows, availability, timezone } = {}) {
   const lockPath = path.join(toolDir, '.apply.lock');
   const runsLogPath = path.join(toolDir, 'logs', 'runs.jsonl');
   const watched = [agentsStatePath, implementerMd, visionMd, statePath, historyPath]; // runs.jsonl 刻意不入 watched：它按设计每次运行都会写
+  // 防回归：沙箱不得携带真实运行时产物（logs/runs.jsonl 等），否则本地 main 会因真实 41 行日志污染 E2E 计数断言
+  assert.equal(fs.existsSync(path.join(toolDir, 'logs')), false, '沙箱不得包含真实运行时 logs/ 目录');
   return { home, toolDir, schedulePath, agentsStatePath, statePath, historyPath, lockPath, runsLogPath, implementerMd, visionMd, watched, ORIGINAL_MODEL };
 }
 
