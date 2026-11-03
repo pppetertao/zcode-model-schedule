@@ -996,17 +996,43 @@ describe('apply.mjs parseArgs', () => {
       status: false,
       force: false,
       ifDue: false,
+      trigger: 'manual',
+      logs: false,
+      lines: 10,
     });
   });
 
   test('全量 flag + --config 取值', () => {
     const opts = parseArgs(['--config', '/tmp/x.json', '--dry-run', '--status', '--force', '--if-due']);
-    assert.deepEqual(opts, { config: '/tmp/x.json', dryRun: true, status: true, force: true, ifDue: true });
+    assert.deepEqual(opts, { config: '/tmp/x.json', dryRun: true, status: true, force: true, ifDue: true, trigger: 'manual', logs: false, lines: 10 });
   });
 
   test('--config 缺值 → throw；未知参数 → throw', () => {
     assert.throws(() => parseArgs(['--config']), /--config/);
     assert.throws(() => parseArgs(['--bogus']), /未知参数/);
+  });
+
+  test('--trigger hook → trigger=hook；--trigger launchd → launchd', () => {
+    assert.equal(parseArgs(['--trigger', 'hook']).trigger, 'hook');
+    assert.equal(parseArgs(['--trigger', 'launchd']).trigger, 'launchd');
+  });
+
+  test('--trigger 缺值 / 空串 → throw', () => {
+    assert.throws(() => parseArgs(['--trigger']), /--trigger/);
+    assert.throws(() => parseArgs(['--trigger', '']), /--trigger/);
+  });
+
+  test('-n 5 → lines=5；-n 0 / -n x / -n 缺值 → throw', () => {
+    assert.equal(parseArgs(['-n', '5']).lines, 5);
+    assert.throws(() => parseArgs(['-n', '0']), /-n/);
+    assert.throws(() => parseArgs(['-n', 'x']), /-n/);
+    assert.throws(() => parseArgs(['-n']), /-n/);
+  });
+
+  test('--logs → logs=true；与 -n / --trigger 组合共存', () => {
+    assert.equal(parseArgs(['--logs']).logs, true);
+    assert.equal(parseArgs(['--logs', '-n', '3']).lines, 3);
+    assert.equal(parseArgs(['--logs', '--trigger', 'launchd']).trigger, 'launchd');
   });
 });
 
