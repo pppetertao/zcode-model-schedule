@@ -1,5 +1,5 @@
 // test/dashboard.test.mjs — dashboard 聚合层 + 模板 + HTTP（node --test；临时目录隔离，禁止触碰真实 ~/.zcode）
-// C1：用例 1-15（lib/dashboard.mjs）；C2 追加用例 16-21（dashboard.mjs HTTP 层，见文件末尾）
+// C1：用例 1-15（lib/dashboard.mjs）；C2 追加用例 16-21（dashboard.mjs HTTP 层，见文件末尾）；review fix 追加 2 条回归用例（窗口不变量、/api/history null 行）
 // TZ 固定 Asia/Shanghai（+08:00 无 DST）；2026-11-02=周一、11-03=周二、11-06=周五、11-07=周六、11-08=周日、11-09=周一
 import { describe, test } from 'node:test';
 import assert from 'node:assert/strict';
