@@ -1660,3 +1660,119 @@ describe('hook script (model-schedule-apply.sh)', () => {
     assert.match(logged, /--if-due/);
   });
 });
+
+// ── run-logging 追加：run-log 模块单元测试 ──
+import {
+  RUN_LOG_SCHEMA,
+  RUN_LOG_MAX_BYTES,
+  appendRunLog,
+  rotateIfNeeded,
+  readRunLogs,
+  formatRunRecord,
+  summarizeError,
+} from '../lib/run-log.mjs';
+
+describe('run-log（appendRunLog / rotateIfNeeded / readRunLogs / formatRunRecord / summarizeError）', () => {
+  test('appendRunLog：写一行合法 JSON（record 原样序列化），嵌套目录自建，mode 0644', () => {
+    const dir = makeTmpDir('runlog');
+    const logPath = path.join(dir, 'nested', 'deeper', 'runs.jsonl');
+    const rec = { schema: RUN_LOG_SCHEMA, time: '2026-11-03T10:00:00.000Z', trigger: 'manual', exitCode: 0 };
+    assert.equal(appendRunLog(logPath, rec), true);
+    const lines = fs.readFileSync(logPath, 'utf8').trim().split('\n');
+    assert.equal(lines.length, 1);
+    assert.deepEqual(JSON.parse(lines[0]), rec);
+    assert.ok(!Number.isNaN(Date.parse(JSON.parse(lines[0]).time)));
+    assert.equal(fs.statSync(logPath).mode & 0o777, 0o644);
+  });
+
+  test('appendRunLog：多次追加 = 多行 JSONL（每条一行）', () => {
+    const dir = makeTmpDir('runlog');
+    const logPath = path.join(dir, 'runs.jsonl');
+    appendRunLog(logPath, { time: '2026-11-03T10:00:00.000Z', seq: 1 });
+    appendRunLog(logPath, { time: '2026-11-03T10:01:00.000Z', seq: 2 });
+    assert.equal(fs.readFileSync(logPath, 'utf8').trim().split('\n').length, 2);
+  });
+
+  test('appendRunLog：父路径是普通文件 → 不 throw、返回 false（降级保证 G3）', () => {
+    const dir = makeTmpDir('runlog');
+    const blocker = path.join(dir, 'blocker');
+    fs.writeFileSync(blocker, 'i am a file', { mode: 0o644 });
+    const logPath = path.join(blocker, 'runs.jsonl'); // 父路径是文件 → mkdirSync 必败
+    assert.equal(appendRunLog(logPath, { time: '2026-11-03T10:00:00.000Z' }), false);
+  });
+
+  test('rotateIfNeeded：< 1MiB 不轮转；≥ 1MiB → rename 到 .1 且旧 .1 被覆盖', () => {
+    const dir = makeTmpDir('runlog');
+    const logPath = path.join(dir, 'runs.jsonl');
+    fs.writeFileSync(logPath, 'x'.repeat(RUN_LOG_MAX_BYTES - 1), { mode: 0o644 });
+    rotateIfNeeded(logPath);
+    assert.ok(fs.existsSync(logPath), '阈值下不轮转');
+    assert.ok(!fs.existsSync(`${logPath}.1`));
+    fs.writeFileSync(`${logPath}.1`, 'old-rotated', { mode: 0o644 });
+    fs.writeFileSync(logPath, 'y'.repeat(RUN_LOG_MAX_BYTES), { mode: 0o644 });
+    rotateIfNeeded(logPath);
+    assert.ok(!fs.existsSync(logPath), '本体已 rename 走');
+    assert.equal(fs.readFileSync(`${logPath}.1`, 'utf8'), 'y'.repeat(RUN_LOG_MAX_BYTES), '旧 .1 被覆盖');
+  });
+
+  test('rotateIfNeeded：本体缺失（ENOENT）→ 直接返回不 throw', () => {
+    const dir = makeTmpDir('runlog');
+    rotateIfNeeded(path.join(dir, 'absent.jsonl'));
+  });
+
+  test('readRunLogs：按 time 降序 + limit 截断', () => {
+    const dir = makeTmpDir('runlog');
+    const logPath = path.join(dir, 'runs.jsonl');
+    for (let i = 1; i <= 3; i++) {
+      appendRunLog(logPath, { time: `2026-11-03T10:0${i}:00.000Z`, seq: i });
+    }
+    assert.deepEqual(readRunLogs(logPath).map((r) => r.seq), [3, 2, 1]);
+    assert.deepEqual(readRunLogs(logPath, { limit: 1 }).map((r) => r.seq), [3]);
+  });
+
+  test('readRunLogs：坏行/空行跳过 + .1 与本体合并降序', () => {
+    const dir = makeTmpDir('runlog');
+    const logPath = path.join(dir, 'runs.jsonl');
+    fs.writeFileSync(`${logPath}.1`, `${JSON.stringify({ time: '2026-11-01T00:00:00.000Z', seq: 0 })}\n`, { mode: 0o644 });
+    fs.writeFileSync(logPath, [
+      JSON.stringify({ time: '2026-11-03T12:00:00.000Z', seq: 2 }),
+      '{broken json',
+      '',
+      JSON.stringify({ time: '2026-11-03T11:00:00.000Z', seq: 1 }),
+    ].join('\n') + '\n', { mode: 0o644 });
+    assert.deepEqual(readRunLogs(logPath).map((r) => r.seq), [2, 1, 0]);
+  });
+
+  test('readRunLogs：文件缺失（本体与 .1 均无）→ []', () => {
+    const dir = makeTmpDir('runlog');
+    assert.deepEqual(readRunLogs(path.join(dir, 'absent.jsonl')), []);
+  });
+
+  test('formatRunRecord：含 action/dur/exit，changes 数组计条数，null 字段打 -', () => {
+    const line = formatRunRecord({
+      time: '2026-11-03T10:00:00.000Z', trigger: 'manual', desiredMode: 'target', inWindow: false,
+      action: 'applied', availability: 'ok', changes: [{}, {}, {}, {}], durationMs: 12, exitCode: 0,
+    });
+    assert.match(line, /\[2026-11-03T10:00:00\.000Z\] manual/);
+    assert.match(line, /desired=target/);
+    assert.match(line, /inWindow=false/);
+    assert.match(line, /action=applied/);
+    assert.match(line, /avail=ok/);
+    assert.match(line, /changes=4/);
+    assert.match(line, /dur=12ms/);
+    assert.match(line, /exit=0/);
+    const sparse = formatRunRecord({ time: null, trigger: 'hook', desiredMode: null, inWindow: null, action: null, availability: null, changes: null, durationMs: null, exitCode: null });
+    assert.equal(sparse, '[-] hook desired=- inWindow=- action=- avail=- changes=- dur=-ms exit=-');
+  });
+
+  test('summarizeError：LockBusyError → lock/LOCK_BUSY；普通 Error → runtime/code；无 message 字段', () => {
+    assert.deepEqual(summarizeError(new LockBusyError('/tmp/x')), { type: 'lock', code: 'LOCK_BUSY' });
+    const e = new Error('boom with api key msched-e2e-secret-9f2');
+    e.code = 'EACCES';
+    const summarized = summarizeError(e);
+    assert.deepEqual(summarized, { type: 'runtime', code: 'EACCES' });
+    assert.equal('message' in summarized, false);
+    assert.ok(!JSON.stringify(summarized).includes('msched-e2e-secret-9f2'), '摘要不得含 message');
+    assert.deepEqual(summarizeError(new Error('no code')), { type: 'runtime', code: null });
+  });
+});
