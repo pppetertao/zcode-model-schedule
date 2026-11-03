@@ -246,7 +246,7 @@ async function main() {
       finish(0);
     }
 
-    acquireLock(LOCK_PATH); // LockBusyError → 下方 catch 落记录后 exit 2
+    const lockToken = acquireLock(LOCK_PATH); // LockBusyError → 下方 catch 落记录后 exit 2
     try {
       // 锁内重读 state（F1：避免并发快照被已切换值污染）
       const state = loadState(STATE_PATH);
@@ -291,7 +291,7 @@ async function main() {
         console.log('no change');
       }
     } finally {
-      releaseLock(LOCK_PATH);
+      releaseLock(LOCK_PATH, lockToken);
     }
     finish(0);
   } catch (err) {

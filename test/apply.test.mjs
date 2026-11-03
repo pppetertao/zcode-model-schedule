@@ -525,16 +525,16 @@ describe('appendHistory', () => {
 describe('acquireLock / releaseLock', () => {
   test('占用中再次抢锁 → LockBusyError；释放后可重新抢锁', () => {
     const lockPath = path.join(makeTmpDir('lock'), '.apply.lock');
-    acquireLock(lockPath);
+    const token = acquireLock(lockPath);
     assert.throws(() => acquireLock(lockPath), (err) => err instanceof LockBusyError && err.code === 'LOCK_BUSY');
-    releaseLock(lockPath);
-    acquireLock(lockPath); // 不抛即通过
-    releaseLock(lockPath);
+    releaseLock(lockPath, token);
+    const token2 = acquireLock(lockPath); // 不抛即通过
+    releaseLock(lockPath, token2);
   });
 
   test('releaseLock 幂等（锁不存在再释放不抛）', () => {
     const lockPath = path.join(makeTmpDir('lock'), '.apply.lock');
-    releaseLock(lockPath);
+    assert.equal(releaseLock(lockPath, 'any-token'), false); // 锁不存在 → false 静默，不抛
   });
 
   // ── F5：陈旧锁回收 ──
@@ -546,8 +546,8 @@ describe('acquireLock / releaseLock', () => {
     const oldTime = Date.now() - 660000; // 11 分钟前
     fs.utimesSync(lockPath, new Date(oldTime), new Date(oldTime));
     // 重抢应成功（删除旧锁并创建新锁）
-    acquireLock(lockPath);
-    releaseLock(lockPath);
+    const token = acquireLock(lockPath);
+    releaseLock(lockPath, token);
   });
 
   test('死进程活锁（pid 不存在 + mtime 新鲜）→ 可重抢', () => {
@@ -555,8 +555,8 @@ describe('acquireLock / releaseLock', () => {
     const lockPath = path.join(dir, '.apply.lock');
     fs.writeFileSync(lockPath, '99999\n', { mode: 0o644 });
     // mtime 保持当前（不陈旧），但 pid=99999 不存在
-    acquireLock(lockPath);
-    releaseLock(lockPath);
+    const token = acquireLock(lockPath);
+    releaseLock(lockPath, token);
   });
 
   test('活锁（pid 存在 + mtime 新鲜）→ LockBusyError', () => {
@@ -633,6 +633,31 @@ describe('acquireLock / releaseLock', () => {
     const token = acquireLock(lockPath);
     assert.equal(typeof token, 'string');
     fs.unlinkSync(lockPath);
+  });
+
+  // ── releaseLock token 化用例（spec 2026-11-03-lock-race §4 用例 9-11）──
+  test('releaseLock(path, 正确 token) → true 且锁文件删除', () => {
+    const lockPath = path.join(makeTmpDir('lock-rel'), '.apply.lock');
+    const token = acquireLock(lockPath);
+    assert.equal(releaseLock(lockPath, token), true);
+    assert.equal(fs.existsSync(lockPath), false);
+  });
+
+  test('他人接管后原持有者 releaseLock(tokenA) → false 不抛、他人锁原样保留（决策①④）', () => {
+    const lockPath = path.join(makeTmpDir('lock-takeover'), '.apply.lock');
+    const tokenA = acquireLock(lockPath);
+    // 模拟旧 bug 场景：锁被他人接管（外部 unlink + 写入他人 JSON 锁）
+    fs.unlinkSync(lockPath);
+    const other = { pid: process.pid, token: 'other-token', startedAt: new Date().toISOString() };
+    fs.writeFileSync(lockPath, JSON.stringify(other) + '\n', { mode: 0o644 });
+    assert.equal(releaseLock(lockPath, tokenA), false); // token 不符 → false 静默，不删
+    assert.equal(fs.existsSync(lockPath), true);
+    assert.equal(JSON.parse(fs.readFileSync(lockPath, 'utf8')).token, 'other-token'); // 他人锁原样
+  });
+
+  test('releaseLock(path) 缺 token → TypeError（签名契约）【旧代码不抛】', () => {
+    const lockPath = path.join(makeTmpDir('lock-notoken'), '.apply.lock');
+    assert.throws(() => releaseLock(lockPath), TypeError);
   });
 });
 
