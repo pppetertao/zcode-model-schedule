@@ -82,6 +82,10 @@ npm run dashboard        # 或：node dashboard.mjs --port <n>
 - 仅监听本机 loopback（`127.0.0.1`），无认证、无 HTTPS。
 - 若端口 8787 已被占用，启动会报错退出；用 `--port <n>` 换一个端口即可。
 
+### 常驻（launchd）
+
+`node install.mjs` 默认同时安装 dashboard LaunchAgent（`com.zcode.model-schedule-dashboard`）：RunAtLoad 登录自动拉起、KeepAlive 崩溃自动重启，端口默认 8787。换端口 `node install.mjs --dashboard-port <n>`（写入 plist 持久生效）；只装调度 agent `node install.mjs --no-dashboard`；日志 `logs/dashboard.out.log` / `logs/dashboard.err.log`；停用 `node install.mjs --uninstall`（同时移除两个 agent）或仅停 dashboard `launchctl bootout gui/$(id -u)/com.zcode.model-schedule-dashboard`；**安装前若已有手工启动的 dashboard 占用端口，先停掉再 install，否则 KeepAlive 会反复重启并刷错误日志**。
+
 ## Configuration
 
 配置文件是项目根目录下的 `schedule.json`（参见 `schedule.example.json`）。`$schema` 必须为 `"zcode-model-schedule/v2"`。
@@ -135,16 +139,18 @@ node apply.mjs [--config <path>] [--status] [--dry-run] [--force] [--if-due] [--
 ### `install.mjs`
 
 ```
-node install.mjs [--config <path>] [--dry-run] [--uninstall] [--register-hook]
+node install.mjs [--config <path>] [--dry-run] [--uninstall] [--register-hook] [--dashboard-port <n>] [--no-dashboard]
 ```
 
 | Flag | Behavior |
 |---|---|
-| (no flags) | 完整安装：写入 `~/Library/LaunchAgents/com.zcode.model-schedule.plist`，在当前 Node 二进制路径记录到 `node-path`，并使用 `launchctl` 引导 agent。 |
+| (no flags) | 完整安装：调度 agent + dashboard agent。写入 `~/Library/LaunchAgents/com.zcode.model-schedule.plist`，在当前 Node 二进制路径记录到 `node-path`，并使用 `launchctl` 引导 agent。 |
 | `--config <path>` | 用于生成 plist 的日程文件。默认：脚本所在目录下的 `schedule.json`。 |
 | `--dry-run` | 将生成的 plist XML 打印到 stdout，不写入或引导任何内容。 |
-| `--uninstall` | 卸载 launchd agent 并删除 plist（如不存在则优雅跳过）。 |
+| `--uninstall` | 卸载调度与 dashboard 两个 launchd agent 并删除对应 plist（如不存在则优雅跳过）。 |
 | `--register-hook` | 向 `~/.zcode/cli/config.json` 幂等地添加 `SessionStart` hook 条目（首次变更前会写入带时间戳的备份）。 |
+| `--dashboard-port <n>` | dashboard 端口，1..65535 整数，默认 8787，写入 dashboard plist 的 `ProgramArguments`。 |
+| `--no-dashboard` | 跳过 dashboard agent 安装，只装调度 agent；与 `--dashboard-port` 同给时以 `--no-dashboard` 为准。 |
 
 plist、`node-path` 和 launchd 日志均相对于脚本自身目录解析，因此项目可以放在家目录中的任意位置。
 
@@ -169,7 +175,7 @@ plist、`node-path` 和 launchd 日志均相对于脚本自身目录解析，因
 |---|---|
 | `state.json` | 当前模式（`original`/`target`）、`switchedAt`、预切换值的快照、`lastCheck`。 |
 | `history.jsonl` | 每次切换/恢复一行 JSON：`{ time, mode, reason: "switch"\|"restore", agents }`。 |
-| `logs/` | `launchd.out.log` / `launchd.err.log`（launchd 运行）、`hook.out.log` / `hook.err.log`（SessionStart hook 运行）。 |
+| `logs/` | `launchd.out.log` / `launchd.err.log`（launchd 运行）、`hook.out.log` / `hook.err.log`（SessionStart hook 运行）、`dashboard.out.log` / `dashboard.err.log`（dashboard launchd 运行）。 |
 | `logs/runs.jsonl` | 每次运行追加一条 JSON 记录（schema `zcode-model-schedule/run-log/v1`：时间、触发源、窗口判定、可用性、action、变更明细、耗时、退出码）；达到 1 MiB 轮转为 `runs.jsonl.1`（保留一份）。`error` 字段只含错误类型与代码，不含 API key 与错误消息；`changes` 中的失败项可能带一句读取错误摘要（不含凭据）。 |
 
 损坏的 `state.json` 被视为"未切换"（stderr 上输出 `[warn]`），因此工具可通过重新评估日程自我修复。
@@ -200,7 +206,7 @@ plist、`node-path` 和 launchd 日志均相对于脚本自身目录解析，因
 ## Uninstall
 
 ```bash
-# 1. 移除 launchd agent
+# 1. 移除 launchd agent（调度 + dashboard 两个）
 node install.mjs --uninstall
 
 # 2. 移除 SessionStart hook：编辑 ~/.zcode/cli/config.json 并删除

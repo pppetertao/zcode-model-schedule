@@ -11,13 +11,16 @@ import { registerHook } from './hooks/register-hook.mjs';
 
 const TOOL_DIR = path.dirname(fileURLToPath(import.meta.url));
 const LABEL = 'com.zcode.model-schedule';
+const DASHBOARD_LABEL = 'com.zcode.model-schedule-dashboard';
 const DEFAULT_CONFIG = path.join(TOOL_DIR, 'schedule.json');
 const PLIST_PATH = path.join(os.homedir(), 'Library', 'LaunchAgents', `${LABEL}.plist`);
+const DASHBOARD_PLIST_PATH = path.join(os.homedir(), 'Library', 'LaunchAgents', `${DASHBOARD_LABEL}.plist`);
 const APPLY_SCRIPT = path.join(TOOL_DIR, 'apply.mjs');
+const DASHBOARD_SCRIPT = path.join(TOOL_DIR, 'dashboard.mjs');
 const NODE_PATH_FILE = path.join(TOOL_DIR, 'node-path');
 const LOGS_DIR = path.join(TOOL_DIR, 'logs');
 const LAUNCHD_PATH_ENV = '/usr/local/bin:/usr/bin:/bin';
-const USAGE = '用法: node install.mjs [--config <path>] [--dry-run] [--uninstall] [--register-hook]';
+const USAGE = '用法: node install.mjs [--config <path>] [--dry-run] [--uninstall] [--register-hook] [--dashboard-port <n>] [--no-dashboard]';
 
 function isMainModule() {
   if (!process.argv[1]) return false;
@@ -75,17 +78,42 @@ ${calendarEntries.join('\n')}
 `;
 }
 
+// dashboard agent plist：RunAtLoad 登录拉起 + KeepAlive 崩溃重启；端口经 ProgramArguments 显式传入（CLI 契约兼容，dashboard.mjs 零改动）
+// 注意：XML 注释刻意不含 DASHBOARD_LABEL 字面量（label 仅在 <key>Label</key> 出现一次），保证 --dry-run | grep -c label 计数唯一
+export function generateDashboardPlist(nodePath, scriptPath, port, uid) {
+  const logsDir = path.join(path.dirname(scriptPath), 'logs');
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- dashboard agent (gui/${uid}) -->
+<plist version="1.0"><dict>
+  <key>Label</key><string>${DASHBOARD_LABEL}</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>${xmlEscape(nodePath)}</string>
+    <string>${xmlEscape(scriptPath)}</string>
+    <string>--port</string>
+    <string>${port}</string>
+  </array>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><true/>
+  <key>StandardOutPath</key><string>${xmlEscape(logsDir)}/dashboard.out.log</string>
+  <key>StandardErrorPath</key><string>${xmlEscape(logsDir)}/dashboard.err.log</string>
+  <key>EnvironmentVariables</key><dict><key>PATH</key><string>${LAUNCHD_PATH_ENV}</string></dict>
+</dict></plist>
+`;
+}
+
 // bootout 对未加载服务报错属预期（首次安装/已卸载）——吞掉该错误让 bootstrap 干净执行
-function bootoutIgnoreFailure(uid) {
+function bootoutIgnoreFailure(uid, label) {
   try {
-    execFileSync('launchctl', ['bootout', `gui/${uid}/${LABEL}`], { stdio: 'ignore' });
+    execFileSync('launchctl', ['bootout', `gui/${uid}/${label}`], { stdio: 'ignore' });
   } catch {
     // launchctl bootout 目标未加载时的报错无后续影响（非敏感 + 幂等语义）
   }
 }
 
 // 写 plist + node-path 文件 + bootstrap；重复安装先 bootout 旧实例
-export function install(schedulePath) {
+export function install(schedulePath, { dashboardPort = 8787, noDashboard = false } = {}) {
   const schedule = loadSchedule(schedulePath);
   const uid = process.getuid();
   const nodePath = process.execPath;
@@ -94,34 +122,47 @@ export function install(schedulePath) {
   fs.mkdirSync(LOGS_DIR, { recursive: true });
   fs.writeFileSync(PLIST_PATH, plist, { mode: 0o644 });
   fs.writeFileSync(NODE_PATH_FILE, `${nodePath}\n`, { mode: 0o644 });
-  bootoutIgnoreFailure(uid);
+  bootoutIgnoreFailure(uid, LABEL); // 幂等：bootout 旧实例再 bootstrap
   execFileSync('launchctl', ['bootstrap', `gui/${uid}`, PLIST_PATH], { stdio: 'inherit' });
   console.log(`installed: ${PLIST_PATH}`);
   console.log(`bootstrapped: gui/${uid}/${LABEL}`);
   console.log(`node-path: ${NODE_PATH_FILE}`);
+  if (!noDashboard) {
+    fs.writeFileSync(DASHBOARD_PLIST_PATH, generateDashboardPlist(nodePath, DASHBOARD_SCRIPT, dashboardPort, uid), { mode: 0o644 });
+    bootoutIgnoreFailure(uid, DASHBOARD_LABEL);
+    execFileSync('launchctl', ['bootstrap', `gui/${uid}`, DASHBOARD_PLIST_PATH], { stdio: 'inherit' });
+    console.log(`installed: ${DASHBOARD_PLIST_PATH}`);
+    console.log(`bootstrapped: gui/${uid}/${DASHBOARD_LABEL}`);
+  }
   return PLIST_PATH;
 }
 
 // bootout + 删除 plist；plist 不存在时提示跳过
 export function uninstall() {
   const uid = process.getuid();
-  bootoutIgnoreFailure(uid);
-  if (fs.existsSync(PLIST_PATH)) {
-    fs.unlinkSync(PLIST_PATH);
-    console.log(`removed: ${PLIST_PATH}`);
-  } else {
-    console.log(`plist 不存在（跳过删除）: ${PLIST_PATH}`);
+  for (const [label, plistPath] of [[LABEL, PLIST_PATH], [DASHBOARD_LABEL, DASHBOARD_PLIST_PATH]]) {
+    bootoutIgnoreFailure(uid, label);
+    if (fs.existsSync(plistPath)) {
+      fs.unlinkSync(plistPath);
+      console.log(`removed: ${plistPath}`);
+    } else {
+      console.log(`plist 不存在（跳过删除）: ${plistPath}`);
+    }
   }
 }
 
 // 只打印 plist，不写文件不 bootstrap
-export function dryRun(schedulePath) {
+export function dryRun(schedulePath, { dashboardPort = 8787, noDashboard = false } = {}) {
   const schedule = loadSchedule(schedulePath);
-  process.stdout.write(generatePlist(schedule, process.execPath, APPLY_SCRIPT, process.getuid()));
+  let out = generatePlist(schedule, process.execPath, APPLY_SCRIPT, process.getuid());
+  if (!noDashboard) {
+    out += '\n' + generateDashboardPlist(process.execPath, DASHBOARD_SCRIPT, dashboardPort, process.getuid());
+  }
+  process.stdout.write(out); // 单次 write：测试捕获 chunk 时 out[0] 即完整输出（分次写会被拆成多 chunk，dryRun 测试断言必红）
 }
 
-function parseInstallArgs(argv) {
-  const opts = { config: DEFAULT_CONFIG, dryRun: false, uninstall: false, registerHook: false };
+export function parseInstallArgs(argv) {
+  const opts = { config: DEFAULT_CONFIG, dryRun: false, uninstall: false, registerHook: false, dashboardPort: 8787, noDashboard: false };
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
     if (arg === '--config') {
@@ -135,6 +176,16 @@ function parseInstallArgs(argv) {
       opts.uninstall = true;
     } else if (arg === '--register-hook') {
       opts.registerHook = true;
+    } else if (arg === '--dashboard-port') {
+      const value = argv[i + 1];
+      const n = Number(value);
+      if (value === undefined || !Number.isInteger(n) || n < 1 || n > 65535) {
+        throw new Error(`--dashboard-port 需要 1..65535 的整数\n${USAGE}`);
+      }
+      opts.dashboardPort = n;
+      i += 1;
+    } else if (arg === '--no-dashboard') {
+      opts.noDashboard = true;
     } else {
       throw new Error(`未知参数: ${arg}\n${USAGE}`);
     }
@@ -147,9 +198,9 @@ if (isMainModule()) {
   if (opts.uninstall) {
     uninstall();
   } else if (opts.dryRun) {
-    dryRun(opts.config);
+    dryRun(opts.config, opts);
   } else {
-    install(opts.config);
+    install(opts.config, opts);
   }
   if (opts.registerHook) {
     registerHook(); // 写真实 ~/.zcode/cli/config.json（默认路径），用户显式 opt-in
