@@ -14,7 +14,7 @@
    - `install.mjs:79 bootoutIgnoreFailure(uid)` — 加 `label` 参数 → `bootoutIgnoreFailure(uid, label)`。
    - `install.mjs:88 install(schedulePath)` — 签名改 `install(schedulePath, { dashboardPort = 8787, noDashboard = false } = {})`，默认同时装两个 agent。
    - `install.mjs:106 uninstall()` — 循环清理两个 agent（bootout + 删 plist）。
-   - `install.mjs:118 dryRun(schedulePath)` — 签名改 `dryRun(schedulePath, { dashboardPort = 8787, noDashboard = false } = {})`，默认打印两个 plist。
+   - `install.mjs:118 dryRun(schedulePath)` — 签名改 `dryRun(schedulePath, { dashboardPort = 8787, noDashboard = false } = {})`，默认打印两个 plist，且为**单次 write**（拼接后一次写出，保证 stdout 捕获 chunk 序列唯一）。
    - `install.mjs:123 parseInstallArgs` — 新增 `--dashboard-port <n>`（校验同 dashboard.mjs:39：1..65535 整数）与 `--no-dashboard`。
    - `install.mjs:145-157` main 分支 — 传 `opts` 给 install/dryRun。
 2. `/Users/peter/Documents/project/zcode-model-schedule/test/install-dashboard.test.mjs` — 新建；锚点 = 导出符号 `generateDashboardPlist` / `parseInstallArgs` / `dryRun`（纯函数测试，不触碰真实 launchd）。
@@ -27,6 +27,7 @@
 - `npm test` → exit 0（既有 generatePlist 测试不回归）。
 - `node install.mjs --dry-run | grep -c 'com.zcode.model-schedule-dashboard'` → 输出 `1`。
 - `node install.mjs --dry-run --no-dashboard | grep -c 'com.zcode.model-schedule-dashboard'` → 输出 `0`。
+  - 注（grep 计数唯一性）：dashboard plist 的 XML 注释为 `<!-- dashboard agent (gui/<uid>) -->`（**不含 label 字面量**），label 仅出现在 `<key>Label</key>` 一处，故上两条 `grep -c` 恰为 1 / 0。
 - `node install.mjs --dry-run --dashboard-port 9000 | grep -A1 -- '--port'` → 含 `<string>9000</string>`。
 - `node install.mjs --dashboard-port abc` → exit 1，stderr 含 `--dashboard-port 需要 1..65535`。
 
@@ -74,11 +75,12 @@ const USAGE = '用法: node install.mjs [--config <path>] [--dry-run] [--uninsta
 **Hunk 2 — 新增 `generateDashboardPlist`（generatePlist 之后，install.mjs:76 与 bootoutIgnoreFailure 之间）**：
 ```js
 // dashboard agent plist：RunAtLoad 登录拉起 + KeepAlive 崩溃重启；端口经 ProgramArguments 显式传入（CLI 契约兼容，dashboard.mjs 零改动）
+// 注意：XML 注释刻意不含 DASHBOARD_LABEL 字面量（label 仅在 <key>Label</key> 出现一次），保证 --dry-run | grep -c label 计数唯一
 export function generateDashboardPlist(nodePath, scriptPath, port, uid) {
   const logsDir = path.join(path.dirname(scriptPath), 'logs');
   return `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<!-- ${DASHBOARD_LABEL} (gui/${uid}) -->
+<!-- dashboard agent (gui/${uid}) -->
 <plist version="1.0"><dict>
   <key>Label</key><string>${DASHBOARD_LABEL}</string>
   <key>ProgramArguments</key>
@@ -156,11 +158,11 @@ export function uninstall() {
 ```js
 export function dryRun(schedulePath, { dashboardPort = 8787, noDashboard = false } = {}) {
   const schedule = loadSchedule(schedulePath);
-  process.stdout.write(generatePlist(schedule, process.execPath, APPLY_SCRIPT, process.getuid()));
+  let out = generatePlist(schedule, process.execPath, APPLY_SCRIPT, process.getuid());
   if (!noDashboard) {
-    process.stdout.write('\n');
-    process.stdout.write(generateDashboardPlist(process.execPath, DASHBOARD_SCRIPT, dashboardPort, process.getuid()));
+    out += '\n' + generateDashboardPlist(process.execPath, DASHBOARD_SCRIPT, dashboardPort, process.getuid());
   }
+  process.stdout.write(out); // 单次 write：测试捕获 chunk 时 out[0] 即完整输出（分次写会被拆成多 chunk，dryRun 测试断言必红）
 }
 ```
 
