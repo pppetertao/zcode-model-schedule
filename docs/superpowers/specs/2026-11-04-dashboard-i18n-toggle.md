@@ -55,7 +55,6 @@ export function resolveLang(raw) {
 | `config.target` | 目标 | Target |
 | `config.agents` | 代理 | Agents |
 | `common.empty` | 暂无数据 | No data |
-| `common.none` | 暂无数据 | No data |
 | `next.none` | 暂无数据 | No data |
 | `next.toTarget` | 切 target | Switch to target |
 | `next.restore` | 恢复 original | Restore original |
@@ -73,7 +72,6 @@ export function resolveLang(raw) {
 | `ui.toggleEn` | EN | EN |
 | `ui.toggleZh` | 中文 | 中文 |
 | `ui.lang` | 语言 | Language |
-| `title` | 当前模式 | Current mode |
 | `sec.currentMode` | 当前模式 | Current mode |
 | `sec.availability` | 可用性 | Availability |
 | `sec.recentRuns` | 最近运行（最多 10 条） | Recent runs (up to 10) |

@@ -445,7 +445,7 @@ describe('startServer', () => {
 // ===== i18n 追加（dashboard 中英文切换）：纯模块用例 22-24（字典/翻译函数/语言解析），不依赖 dashboard 改动 =====
 
 describe('i18n', () => {
-  // spec Files#1 表（:27-:83）穷尽 57 key；遍历断言防「两侧同漏」，对等断言防「单侧漏/多」
+  // spec Files#1 表（:27-:83）穷尽 55 key；遍历断言防「两侧同漏」，对等断言防「单侧漏/多」
   const SPEC_KEYS = [
     'mode.state', 'mode.desiredMode', 'mode.inWindow', 'mode.activeWindow', 'mode.switchedAt',
     'mode.inWindow.yes', 'mode.inWindow.no',
@@ -455,21 +455,20 @@ describe('i18n', () => {
     'hist.col.mode', 'hist.col.reason', 'hist.col.agents',
     'dw.col.days', 'dw.col.from', 'dw.col.to',
     'config.target', 'config.agents',
-    'common.empty', 'common.none',
+    'common.empty',
     'next.none', 'next.toTarget', 'next.restore', 'next.soon', 'next.countdown',
     'banner.scheduleError', 'banner.stateMissing', 'banner.stateCorrupt',
     'trigger.button', 'trigger.confirm', 'trigger.busy', 'trigger.done', 'trigger.fail', 'trigger.network',
     'ui.toggleEn', 'ui.toggleZh', 'ui.lang',
-    'title',
     'sec.currentMode', 'sec.availability', 'sec.recentRuns', 'sec.switchHistory', 'sec.configSummary', 'sec.manualTrigger',
     'config.details',
   ];
 
-  test('用例22 MESSAGES zh/en key 对等、无空值、覆盖 spec 全部 57 key', () => {
+  test('用例22 MESSAGES zh/en key 对等、无空值、覆盖 spec 全部 55 key', () => {
     const zhKeys = Object.keys(MESSAGES.zh);
     const enKeys = Object.keys(MESSAGES.en);
     assert.deepEqual([...enKeys].sort(), [...zhKeys].sort()); // 单侧漏/多 key 即红
-    assert.equal(SPEC_KEYS.length, 57); // 本数组自身抄录完整性自检
+    assert.equal(SPEC_KEYS.length, 55); // 本数组自身抄录完整性自检
     for (const k of SPEC_KEYS) {
       assert.ok(k in MESSAGES.zh, `zh 缺 key ${k}`); // 双侧同漏即红
       assert.ok(k in MESSAGES.en, `en 缺 key ${k}`);
