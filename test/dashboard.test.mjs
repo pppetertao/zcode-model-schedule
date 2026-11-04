@@ -445,7 +445,7 @@ describe('startServer', () => {
 // ===== i18n 追加（dashboard 中英文切换）：纯模块用例 22-24（字典/翻译函数/语言解析），不依赖 dashboard 改动 =====
 
 describe('i18n', () => {
-  // spec Files#1 表（:27-:83）穷尽 55 key；遍历断言防「两侧同漏」，对等断言防「单侧漏/多」
+  // spec Files#1 表（:27-:81）穷尽 55 key；遍历断言防「两侧同漏」，对等断言防「单侧漏/多」
   const SPEC_KEYS = [
     'mode.state', 'mode.desiredMode', 'mode.inWindow', 'mode.activeWindow', 'mode.switchedAt',
     'mode.inWindow.yes', 'mode.inWindow.no',
