@@ -563,3 +563,44 @@ describe('renderDashboardPage i18n', () => {
     assert.ok(htmlZh.includes('<th data-i18n="runs.col.time">时间</th>'));
   });
 });
+
+// ===== i18n Task3 追加（用例 27-28）：renderClientScript 客户端脚本 i18n =====
+
+describe('renderClientScript i18n', () => {
+  test('用例27 脚本含注入/切换/恢复机制关键串；ES5 合规（无箭头/模板字面量/const/let）', () => {
+    const dir = makeTmpDir('i18n-script');
+    const d = buildDashboardData({ ...writeFullFixtures(dir), now: NOW_IN_WINDOW });
+    const html = renderDashboardPage(d);
+    assert.ok(html.includes('window.__I18N__'));
+    assert.ok(html.includes('zcode-dashboard-lang'));
+    assert.ok(html.includes('data-i18n'));
+    assert.ok(html.includes("querySelectorAll('[data-i18n]')"));
+    assert.ok(html.includes("localStorage.setItem('zcode-dashboard-lang'"));
+    assert.ok(html.includes("localStorage.getItem('zcode-dashboard-lang'"));
+    assert.ok(html.includes("addEventListener('click'"));
+    const script = html.split('(function () {\n')[1].split('\n})();')[0]; // 客户端纯脚本（排除 __I18N__ 注入行，字典值不受 ES5 断言误伤）
+    assert.equal(script.includes('=>'), false); // 无箭头函数
+    assert.equal(script.includes('`'), false); // 无模板字面量
+    assert.equal(script.includes('const '), false);
+    assert.equal(script.includes('let '), false);
+  });
+
+  test('用例28 lang=en 整页（含客户端脚本）无中文文案残留、无裸 state.mode；zh 页含恢复机制', () => {
+    const dir = makeTmpDir('i18n-script-en');
+    const d = buildDashboardData({ ...writeFullFixtures(dir), now: NOW_IN_WINDOW });
+    const htmlEn = renderDashboardPage(d, { lang: 'en' });
+    const serverHtmlEn = htmlEn.split('<script>')[0]; // 服务端渲染区
+    const scriptEn = htmlEn.split('(function () {\n')[1].split('\n})();')[0]; // 客户端纯脚本（注入行的 __I18N__ 含 zh 字典属预期，从 IIFE 起截取排除）
+    for (const zh of ['暂无数据', '当前模式', '期望模式', '窗口内', '手动触发', '切 target', '恢复 original', '是（白日窗）', '触发完成', '已有触发进行中']) {
+      assert.equal(serverHtmlEn.includes(zh), false, `en 服务端区残留中文: ${zh}`);
+      assert.equal(scriptEn.includes(zh), false, `en 客户端脚本残留中文: ${zh}`);
+    }
+    assert.ok(scriptEn.includes("t('mode.state')")); // 客户端 modePairs label 已 t() 化
+    assert.equal(htmlEn.includes('"state.mode"'), false); // 无裸 state.mode 进入任何 JSON/标签（脚本内 d.state.mode 为数据访问表达式，不算裸 key）
+    assert.ok(htmlEn.includes('Switching soon'));
+    assert.ok(htmlEn.includes('Trigger finished exit='));
+    const htmlZh = renderDashboardPage(d);
+    assert.ok(htmlZh.includes('当前模式'));
+    assert.ok(htmlZh.includes("localStorage.getItem('zcode-dashboard-lang')")); // 刷新保持机制在位
+  });
+});
