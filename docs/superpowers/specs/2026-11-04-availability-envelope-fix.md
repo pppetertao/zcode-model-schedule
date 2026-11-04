@@ -71,14 +71,14 @@
 ### 验证命令（TDD 顺序执行并贴 stdout/exit code）
 
 ```bash
-node --test test/apply.test.mjs   # ① baseline（改前）全绿；② 仅加测试后：恰 2 个新用例红（旧码实际均 no-active-plan）；③ 改产后全绿（17 用例）
+node --test test/apply.test.mjs   # ① baseline（改前）全绿；② 仅加测试后：恰 2 个新用例红（旧码实际均 no-active-plan）；③ 改产后全绿（18 用例）
 npm test                          # ④ 全仓回归绿
 node apply.mjs --dry-run --force  # ⑤ 可选人工冒烟（触真实网络与真实 ~/.zcode config）：不再输出 skipped: no-active-plan
 ```
 
 ## Acceptance Criteria
 
-- `node --test test/apply.test.mjs` exit 0：checkAvailability 既有 15 用例全绿（扁平 fixture 零回归）+ 新增 2 用例绿
+- `node --test test/apply.test.mjs` exit 0：checkAvailability 既有 16 用例全绿（扁平 fixture 零回归）+ 新增 2 用例绿
 - 嵌套信封用例精确断言 `{ available: true, reason: 'ok', plan: { endsAt: 1793754000 } }`（实测字段自洽：server_time=1793753110 ∈ [1793704125, 1793754000)，capabilities 含 `model:glm-5.3-flash`）
 - code!==0 用例精确断言 `{ available: false, reason: 'non-200' }`
 - `npm test` exit 0
