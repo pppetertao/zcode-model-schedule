@@ -633,3 +633,32 @@ describe('客户端切换机制修正', () => {
     }
   });
 });
+
+// ===== i18n Task4 追加（用例 29）：dashboard.mjs HTTP 层 lang 接线 =====
+
+describe('dashboard HTTP lang', () => {
+  test('用例29 GET /?lang=en 英文、GET / 中文、/?lang=xx 回落中文（port 0 集成）', async () => {
+    const dir = makeTmpDir('http-lang');
+    const handler = createRequestHandler(httpDeps(writeFullFixtures(dir)));
+    let server;
+    try {
+      server = await startServer({ handler, port: 0 });
+      const base = `http://127.0.0.1:${server.address().port}`;
+      const htmlEn = await (await fetch(`${base}/?lang=en`)).text();
+      assert.ok(htmlEn.includes('<html lang="en">'));
+      assert.ok(htmlEn.split('<script>')[0].includes('Current mode')); // 服务端渲染区（<script> 注入含 zh 字典属预期）
+      assert.equal(htmlEn.split('<script>')[0].includes('当前模式'), false);
+      const htmlZh = await (await fetch(`${base}/`)).text();
+      assert.ok(htmlZh.includes('<html lang="zh-CN">'));
+      assert.ok(htmlZh.split('<script>')[0].includes('当前模式'));
+      const htmlXx = await (await fetch(`${base}/?lang=xx`)).text();
+      assert.ok(htmlXx.includes('<html lang="zh-CN">')); // 非法 lang 回落 zh
+      assert.ok(htmlXx.split('<script>')[0].includes('当前模式'));
+    } finally {
+      if (server) {
+        server.closeIdleConnections?.();
+        await new Promise((resolve) => server.close(resolve)); // try/finally 兜底 close，禁止挂起
+      }
+    }
+  });
+});

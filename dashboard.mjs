@@ -10,6 +10,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { execFile } from 'node:child_process';
 import { DASH_SCHEMA, buildDashboardData, readJsonlLinesLocal, renderDashboardPage } from './lib/dashboard.mjs';
 import { readRunLogs } from './lib/run-log.mjs';
+import { resolveLang } from './lib/i18n.mjs';
 
 const TOOL_DIR = path.dirname(fileURLToPath(import.meta.url));
 const DEFAULT_CONFIG = path.join(TOOL_DIR, 'schedule.json');
@@ -103,7 +104,7 @@ export function createRequestHandler(deps) {
       const { pathname } = url;
       if (pathname === '/') {
         if (req.method !== 'GET') return sendJson(res, 405, { error: 'method-not-allowed' }, { Allow: 'GET' });
-        const html = renderDashboardPage(await data());
+        const html = renderDashboardPage(await data(), { lang: resolveLang(url.searchParams.get('lang')) });
         res.writeHead(200, {
           'Content-Type': 'text/html; charset=utf-8',
           'Cache-Control': 'no-store',
