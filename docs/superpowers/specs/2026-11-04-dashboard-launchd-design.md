@@ -168,7 +168,7 @@ export function dryRun(schedulePath, { dashboardPort = 8787, noDashboard = false
 
 **Hunk 7 — `parseInstallArgs`（install.mjs:123-143 整体替换）**：
 ```js
-function parseInstallArgs(argv) {
+export function parseInstallArgs(argv) {
   const opts = { config: DEFAULT_CONFIG, dryRun: false, uninstall: false, registerHook: false, dashboardPort: 8787, noDashboard: false };
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];

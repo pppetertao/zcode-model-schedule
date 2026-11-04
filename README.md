@@ -84,7 +84,12 @@ npm run dashboard        # 或：node dashboard.mjs --port <n>
 
 ### 常驻（launchd）
 
-`node install.mjs` 默认同时安装 dashboard LaunchAgent（`com.zcode.model-schedule-dashboard`）：RunAtLoad 登录自动拉起、KeepAlive 崩溃自动重启，端口默认 8787。换端口 `node install.mjs --dashboard-port <n>`（写入 plist 持久生效）；只装调度 agent `node install.mjs --no-dashboard`；日志 `logs/dashboard.out.log` / `logs/dashboard.err.log`；停用 `node install.mjs --uninstall`（同时移除两个 agent）或仅停 dashboard `launchctl bootout gui/$(id -u)/com.zcode.model-schedule-dashboard`；**安装前若已有手工启动的 dashboard 占用端口，先停掉再 install，否则 KeepAlive 会反复重启并刷错误日志**。
+`node install.mjs` 默认同时安装 dashboard LaunchAgent（`com.zcode.model-schedule-dashboard`）：RunAtLoad 登录自动拉起、KeepAlive 崩溃自动重启，端口默认 8787。换端口 `node install.mjs --dashboard-port <n>`（写入 plist 持久生效）；端口只记录在 dashboard plist 中，重装/升级重新执行 `node install.mjs` 时需重复带 `--dashboard-port <n>`，否则回落 8787。只装调度 agent `node install.mjs --no-dashboard`；日志 `logs/dashboard.out.log` / `logs/dashboard.err.log`；**安装前若已有手工启动的 dashboard 占用端口，先停掉再 install，否则 KeepAlive 会反复重启并刷错误日志**。
+
+停用分两档：
+
+- **临时停止** — `launchctl bootout gui/$(id -u)/com.zcode.model-schedule-dashboard`：仅卸载当前 job，plist 仍在，下次登录会再次加载。
+- **长期停用** — `node install.mjs --uninstall`（移除两个 agent），或 bootout 后删除 `~/Library/LaunchAgents/com.zcode.model-schedule-dashboard.plist`。
 
 ## Configuration
 
