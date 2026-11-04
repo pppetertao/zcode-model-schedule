@@ -1045,6 +1045,41 @@ describe('checkAvailability', () => {
     });
     assert.deepEqual(result, { available: false, reason: 'http-error' });
   });
+
+  // ── 信封解包用例（spec 2026-11-04-availability-envelope-fix）：真实端点 200 为 { code, msg, data: {...}, logid } 信封 ──
+  test('嵌套信封 code=0（实测真实字段值）→ 解包后 available ok', async () => {
+    const configPath = writeAvailConfig(makeTmpDir('avail'), { apiKey: API_KEY });
+    const payload = {
+      code: 0,
+      msg: '',
+      data: {
+        server_time: 1793753110,
+        plans: [
+          {
+            user_plan_id: 'up-1001',
+            plan_id: 'plan-start',
+            name: 'GLM Coding Start',
+            description: 'start plan',
+            priority: 1,
+            status: 'active',
+            starts_at: 1793704125,
+            ends_at: 1793754000,
+            entitlements: [{ capabilities: ['model:glm-5.3-flash'] }],
+          },
+        ],
+      },
+      logid: '20261104-envelope-fix',
+    };
+    const result = await withFetch(async () => okResponse(payload), () => checkAvailability(availSchedule(), configPath));
+    assert.deepEqual(result, { available: true, reason: 'ok', plan: { endsAt: 1793754000 } });
+  });
+
+  test('信封 code!==0（HTTP 200 但接口错误）→ non-200', async () => {
+    const configPath = writeAvailConfig(makeTmpDir('avail'), { apiKey: API_KEY });
+    const payload = { code: 401, msg: 'unauthorized', data: null, logid: 'x' };
+    const result = await withFetch(async () => okResponse(payload), () => checkAvailability(availSchedule(), configPath));
+    assert.deepEqual(result, { available: false, reason: 'non-200' });
+  });
 });
 
 // ── Task 3 追加：apply-core v2 ──
