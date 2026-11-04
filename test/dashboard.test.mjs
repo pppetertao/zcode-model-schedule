@@ -604,3 +604,32 @@ describe('renderClientScript i18n', () => {
     assert.ok(htmlZh.includes("localStorage.getItem('zcode-dashboard-lang')")); // 刷新保持机制在位
   });
 });
+
+// ===== fix round 1 追加（用例 30）：客户端切换机制修正（按钮文案翻转 / 轮询数据回写 / URL 参数优先）=====
+
+describe('客户端切换机制修正', () => {
+  test('用例30 脚本 setAttribute 回写 data-i18n + URL lang 优先 + trigger.fail 兜底；en 服务端区无中文；表头 key 走服务端属性、KV key 走客户端 t()', () => {
+    const dir = makeTmpDir('i18n-fix');
+    const d = buildDashboardData({ ...writeFullFixtures(dir), now: NOW_IN_WINDOW });
+    const en = renderDashboardPage(d, { lang: 'en' });
+    const script = en.slice(en.indexOf('(function () {\n')).split('\n})();')[0]; // 完整客户端 IIFE（用例27 的 split 提取会被 refresh 内第 2 处 '(function () {' 截断，漏掉 :518-549）
+    assert.ok(script.includes("setAttribute('data-i18n'"), '脚本需以 setAttribute 回写 data-i18n');
+    assert.ok(script.includes("indexOf('lang=')"), '脚本需读取 URL lang 参数做优先级判定');
+    assert.ok(script.includes("t('trigger.fail'"), 'trigger.fail 需走 t()');
+    assert.ok(script.includes("'-'"), 'trigger.fail 的 msg 需有 - 兜底');
+
+    // en 页服务端区无中文。lang-toggle 按钮文本按设计就是「中文」（en 页点击切回中文，用例25 已锁该文本），
+    // 属切换控件自身标签而非未翻译残留，故断言前先剔除该按钮再测 CJK。
+    const serverPart = en.split('<script>')[0].replace(/<button id="lang-toggle"[^>]*>[^<]*<\/button>/, '');
+    assert.equal(/[\u4e00-\u9fff]/.test(serverPart), false);
+
+    // 表头 key 由服务端 data-i18n 属性承载、客户端遍历回写 textContent（不存在 t('<key>' 字面形态）
+    for (const key of ['runs.col.time', 'runs.col.trigger', 'runs.col.desiredMode', 'runs.col.inWindow', 'runs.col.action', 'runs.col.availability', 'runs.col.changes', 'runs.col.duration', 'runs.col.exit', 'hist.col.mode', 'hist.col.reason', 'hist.col.agents', 'dw.col.days', 'dw.col.from', 'dw.col.to']) {
+      assert.ok(en.includes(`data-i18n="${key}"`), `en 页缺 data-i18n="${key}"`);
+    }
+    // KV label 由客户端 t() 生成
+    for (const key of ['avail.enabled', 'avail.endpoint', 'avail.provider', 'avail.model', 'avail.timeout', 'avail.lastRunReason', 'config.target', 'config.agents']) {
+      assert.ok(script.includes(`t('${key}'`), `脚本缺 t('${key}')`);
+    }
+  });
+});
