@@ -16,6 +16,7 @@ import {
   renderDashboardPage,
 } from '../lib/dashboard.mjs';
 import { createRequestHandler, runApplyIfDue, startServer } from '../dashboard.mjs';
+import { MESSAGES, t, resolveLang, LOCALES, LANG_KEYS } from '../lib/i18n.mjs';
 
 const TZ = 'Asia/Shanghai';
 const NOW_IN_WINDOW = new Date('2026-11-03T10:00:00+08:00'); // 周二 10:00，白日窗内
@@ -438,5 +439,79 @@ describe('startServer', () => {
         await new Promise((resolve) => server.close(resolve)); // try/finally 兜底 close，禁止挂起
       }
     }
+  });
+});
+
+// ===== i18n 追加（dashboard 中英文切换）：纯模块用例 22-24（字典/翻译函数/语言解析），不依赖 dashboard 改动 =====
+
+describe('i18n', () => {
+  // spec Files#1 表（:27-:83）穷尽 57 key；遍历断言防「两侧同漏」，对等断言防「单侧漏/多」
+  const SPEC_KEYS = [
+    'mode.state', 'mode.desiredMode', 'mode.inWindow', 'mode.activeWindow', 'mode.switchedAt',
+    'mode.inWindow.yes', 'mode.inWindow.no',
+    'avail.enabled', 'avail.endpoint', 'avail.provider', 'avail.model', 'avail.timeout', 'avail.lastRunReason',
+    'runs.col.time', 'runs.col.trigger', 'runs.col.desiredMode', 'runs.col.inWindow', 'runs.col.action',
+    'runs.col.availability', 'runs.col.changes', 'runs.col.duration', 'runs.col.exit',
+    'hist.col.mode', 'hist.col.reason', 'hist.col.agents',
+    'dw.col.days', 'dw.col.from', 'dw.col.to',
+    'config.target', 'config.agents',
+    'common.empty', 'common.none',
+    'next.none', 'next.toTarget', 'next.restore', 'next.soon', 'next.countdown',
+    'banner.scheduleError', 'banner.stateMissing', 'banner.stateCorrupt',
+    'trigger.button', 'trigger.confirm', 'trigger.busy', 'trigger.done', 'trigger.fail', 'trigger.network',
+    'ui.toggleEn', 'ui.toggleZh', 'ui.lang',
+    'title',
+    'sec.currentMode', 'sec.availability', 'sec.recentRuns', 'sec.switchHistory', 'sec.configSummary', 'sec.manualTrigger',
+    'config.details',
+  ];
+
+  test('用例22 MESSAGES zh/en key 对等、无空值、覆盖 spec 全部 57 key', () => {
+    const zhKeys = Object.keys(MESSAGES.zh);
+    const enKeys = Object.keys(MESSAGES.en);
+    assert.deepEqual([...enKeys].sort(), [...zhKeys].sort()); // 单侧漏/多 key 即红
+    assert.equal(SPEC_KEYS.length, 57); // 本数组自身抄录完整性自检
+    for (const k of SPEC_KEYS) {
+      assert.ok(k in MESSAGES.zh, `zh 缺 key ${k}`); // 双侧同漏即红
+      assert.ok(k in MESSAGES.en, `en 缺 key ${k}`);
+    }
+    for (const k of zhKeys) {
+      assert.equal(typeof MESSAGES.zh[k], 'string');
+      assert.ok(MESSAGES.zh[k].length > 0, `zh 空值 @ ${k}`);
+      assert.equal(typeof MESSAGES.en[k], 'string');
+      assert.ok(MESSAGES.en[k].length > 0, `en 空值 @ ${k}`);
+    }
+  });
+
+  test('用例23 t() 基本翻译 / 参数替换 / 缺失 key 回退 / 非法 lang 回落 zh', () => {
+    assert.equal(t('zh', 'mode.state'), '当前模式');
+    assert.equal(t('en', 'mode.state'), 'Current mode');
+    assert.equal(
+      t('zh', 'next.countdown', { time: '23:10', m: 3, s: 20, label: 'target' }),
+      '23:10（3 分 20 秒后 → target）',
+    );
+    assert.equal(
+      t('en', 'next.countdown', { time: '23:10', m: 3, s: 20, label: 'target' }),
+      '23:10 (3m 20s → target)',
+    );
+    assert.equal(t('zh', 'banner.scheduleError', { msg: 'oops' }), 'schedule 加载失败：oops');
+    assert.equal(t('en', 'trigger.fail', { code: 2, msg: 'busy' }), 'Trigger failed exit=2 (busy)');
+    assert.equal(t('zh', 'no.such.key'), 'no.such.key'); // 缺失 key fail-open 回退 key 本身
+    assert.equal(t('zh', 'no.such.key', { x: 1 }), 'no.such.key'); // 占位不在模板中时不受 params 影响
+    assert.equal(t('xx', 'mode.state'), '当前模式'); // 非法 lang 回落 zh
+    assert.equal(t(undefined, 'mode.state'), '当前模式');
+    assert.equal(t('zh', 'ui.toggleEn'), 'EN'); // zh 模式按钮显示 EN（点击切英）
+    assert.equal(t('en', 'ui.toggleZh'), '中文'); // en 模式按钮显示中文（点击切回）
+  });
+
+  test('用例24 resolveLang 仅 en→en、其余一律 zh；LOCALES/LANG_KEYS 形状冻结', () => {
+    assert.equal(resolveLang('en'), 'en');
+    assert.equal(resolveLang('zh'), 'zh');
+    assert.equal(resolveLang('xx'), 'zh');
+    assert.equal(resolveLang('EN'), 'zh'); // 大小写敏感，不归一
+    assert.equal(resolveLang(''), 'zh');
+    assert.equal(resolveLang(undefined), 'zh');
+    assert.equal(resolveLang(null), 'zh');
+    assert.deepEqual(LOCALES, { zh: 'zh-CN', en: 'en-US' });
+    assert.deepEqual(LANG_KEYS, ['zh', 'en']);
   });
 });
