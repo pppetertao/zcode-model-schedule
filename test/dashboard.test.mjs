@@ -515,3 +515,51 @@ describe('i18n', () => {
     assert.deepEqual(LANG_KEYS, ['zh', 'en']);
   });
 });
+
+// ===== i18n Task2 追加（用例 25-26）：renderDashboardPage 服务端 lang 渲染 =====
+
+describe('renderDashboardPage i18n', () => {
+  test('用例25 lang=en：html lang/en 文案/表头/KV label/按钮/注入全 t() 化，mode 区块无裸 state.mode', () => {
+    const dir = makeTmpDir('i18n-en');
+    const d = buildDashboardData({ ...writeFullFixtures(dir), now: NOW_IN_WINDOW });
+    const html = renderDashboardPage(d, { lang: 'en' });
+    const serverHtml = html.split('<script>')[0]; // 服务端渲染区（<script> 注入行的 __I18N__ 含 zh 字典全文属预期，排除后断言）
+    assert.ok(html.includes('<html lang="en">'));
+    assert.ok(html.includes('Current mode')); // h2 sec.currentMode + mode KV label
+    assert.equal(serverHtml.includes('当前模式'), false);
+    assert.ok(html.includes('<th data-i18n="runs.col.time">Time</th>'));
+    assert.ok(html.includes('<th data-i18n="runs.col.availability">Availability</th>'));
+    assert.ok(html.includes('<th data-i18n="dw.col.days">Days</th>'));
+    assert.ok(html.includes('>Desired mode<')); // mode KV desiredMode label
+    const modeKv = html.match(/<div class="card kv" id="mode">([\s\S]*?)<\/div>/)[1];
+    assert.equal(modeKv.includes('>state.mode<'), false); // 服务端 KV label 不再裸 key（数据值仍原样）
+    assert.ok(modeKv.includes('>In window<'));
+    assert.ok(html.includes('data-i18n="config.details">Full config JSON</summary>'));
+    assert.ok(html.includes('Manually trigger apply (--if-due, idempotent)')); // trigger 按钮文本
+    assert.ok(html.includes('id="lang-toggle"'));
+    assert.ok(html.includes('data-i18n="ui.toggleZh"')); // en 页按钮指向中文 key
+    assert.ok(html.includes('>中文</button>')); // en 页按钮显示中文（点击切回）
+    assert.ok(html.includes('window.__I18N__'));
+    assert.ok(html.includes('window.__I18N_LANG__ = "en"'));
+  });
+
+  test('用例26 lang=en 全缺失数据 → 服务端空态 No data；默认 zh 保持中文且结构断言兼容', () => {
+    const dir = makeTmpDir('i18n-empty-en');
+    const d = buildDashboardData({
+      configPath: path.join(dir, 'schedule.json'),
+      statePath: path.join(dir, 'state.json'),
+      historyPath: path.join(dir, 'history.jsonl'),
+      runLogPath: path.join(dir, 'logs', 'runs.jsonl'),
+      now: NOW_IN_WINDOW,
+    });
+    const htmlEn = renderDashboardPage(d, { lang: 'en' });
+    assert.ok(htmlEn.includes('<td colspan="9">No data</td>')); // runs 空态（服务端区）
+    const htmlZh = renderDashboardPage(d);
+    assert.ok(htmlZh.includes('<td colspan="9">暂无数据</td>')); // 与 :208 断言同源（默认 zh）
+    assert.ok(htmlZh.includes('当前模式'));
+    assert.ok(htmlZh.includes('<html lang="zh-CN">'));
+    assert.ok(htmlZh.includes('data-i18n="ui.toggleEn"')); // zh 页按钮指向英文 key
+    assert.ok(htmlZh.includes('>EN</button>'));
+    assert.ok(htmlZh.includes('<th data-i18n="runs.col.time">时间</th>'));
+  });
+});
