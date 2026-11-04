@@ -78,6 +78,8 @@ Once started, open **http://127.0.0.1:8787** in your browser. Note: it does **no
 
 The page shows: current mode, availability, recent runs (up to 10), switch history (up to 10), a config summary, and a manual trigger button.
 
+The top-right button toggles the page between Chinese and English; the choice is saved in the browser's localStorage.
+
 - The manual trigger button is equivalent to `node apply.mjs --if-due --trigger dashboard`; it is idempotent (only acts when a mode change is actually due) and offers no forced override.
 - It listens only on the loopback interface (`127.0.0.1`), with no authentication and no HTTPS.
 - If port 8787 is already in use, startup fails with an error; pass `--port <n>` to use a different port.

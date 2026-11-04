@@ -78,6 +78,8 @@ npm run dashboard        # 或：node dashboard.mjs --port <n>
 
 页面包含：当前模式、可用性、最近运行（最多 10 条）、切换历史（最多 10 条）、配置摘要、手动触发。
 
+页面右上角可切换中/英文，选择会保存在浏览器 localStorage。
+
 - 手动触发按钮等价于 `node apply.mjs --if-due --trigger dashboard`，是幂等的（仅在模式真正需要改变时执行），不提供强制覆盖。
 - 仅监听本机 loopback（`127.0.0.1`），无认证、无 HTTPS。
 - 若端口 8787 已被占用，启动会报错退出；用 `--port <n>` 换一个端口即可。
