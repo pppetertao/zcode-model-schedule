@@ -578,7 +578,10 @@ describe('renderClientScript i18n', () => {
     assert.ok(html.includes("localStorage.setItem('zcode-dashboard-lang'"));
     assert.ok(html.includes("localStorage.getItem('zcode-dashboard-lang'"));
     assert.ok(html.includes("addEventListener('click'"));
-    const script = html.slice(html.indexOf('(function () {\n')).split('\n})();')[0]; // 客户端纯脚本（与用例30 同法提取：覆盖整个 IIFE，含 visibilitychange/lang-toggle/trigger 处理器/localStorage 恢复/startPolling；排除 __I18N__ 注入行，字典值不受 ES5 断言误伤）
+    const start = html.indexOf('(function () {\n');
+    assert.notEqual(start, -1, '客户端 IIFE 头未找到');
+    const script = html.slice(start).split('\n})();')[0]; // 客户端纯脚本（与用例30 同法提取：以 IIFE 头 indexOf 起切、到首个 '\n})();' 止，覆盖整个 IIFE，含 visibilitychange/lang-toggle/trigger 处理器/localStorage 恢复/startPolling；排除 __I18N__ 注入行，字典值不受 ES5 断言误伤）
+    assert.ok(script.length > 500 && script.includes("'use strict'"), '客户端脚本提取疑似截断');
     assert.equal(script.includes('=>'), false); // 无箭头函数
     assert.equal(script.includes('`'), false); // 无模板字面量
     assert.equal(script.includes('const '), false);
@@ -612,7 +615,11 @@ describe('客户端切换机制修正', () => {
     const dir = makeTmpDir('i18n-fix');
     const d = buildDashboardData({ ...writeFullFixtures(dir), now: NOW_IN_WINDOW });
     const en = renderDashboardPage(d, { lang: 'en' });
-    const script = en.slice(en.indexOf('(function () {\n')).split('\n})();')[0]; // 完整客户端 IIFE（用例27 的 split 提取会被 refresh 内第 2 处 '(function () {' 截断，漏掉 :518-549）
+    const start = en.indexOf('(function () {\n');
+    assert.notEqual(start, -1, '客户端 IIFE 头未找到');
+    const script = en.slice(start).split('\n})();')[0]; // 完整客户端 IIFE（以 IIFE 头 indexOf 起切、到首个 '\n})();' 止，不含 __I18N__ 注入行）
+    assert.ok(script.length > 500 && script.includes("'use strict'"), '客户端脚本提取疑似截断');
+    assert.ok(script.includes("var lp = LANG === 'en' ? '(' : '（';") && script.includes("var rp = LANG === 'en' ? ')' : '）';"), '客户端 clock 括号需随 LANG 切换');
     assert.ok(script.includes("setAttribute('data-i18n'"), '脚本需以 setAttribute 回写 data-i18n');
     assert.ok(script.includes("indexOf('lang=')"), '脚本需读取 URL lang 参数做优先级判定');
     assert.ok(script.includes("t('trigger.fail'"), 'trigger.fail 需走 t()');
