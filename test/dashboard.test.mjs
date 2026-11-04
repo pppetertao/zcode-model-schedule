@@ -578,7 +578,7 @@ describe('renderClientScript i18n', () => {
     assert.ok(html.includes("localStorage.setItem('zcode-dashboard-lang'"));
     assert.ok(html.includes("localStorage.getItem('zcode-dashboard-lang'"));
     assert.ok(html.includes("addEventListener('click'"));
-    const script = html.split('(function () {\n')[1].split('\n})();')[0]; // 客户端纯脚本（排除 __I18N__ 注入行，字典值不受 ES5 断言误伤）
+    const script = html.slice(html.indexOf('(function () {\n')).split('\n})();')[0]; // 客户端纯脚本（与用例30 同法提取：覆盖整个 IIFE，含 visibilitychange/lang-toggle/trigger 处理器/localStorage 恢复/startPolling；排除 __I18N__ 注入行，字典值不受 ES5 断言误伤）
     assert.equal(script.includes('=>'), false); // 无箭头函数
     assert.equal(script.includes('`'), false); // 无模板字面量
     assert.equal(script.includes('const '), false);
@@ -617,11 +617,14 @@ describe('客户端切换机制修正', () => {
     assert.ok(script.includes("indexOf('lang=')"), '脚本需读取 URL lang 参数做优先级判定');
     assert.ok(script.includes("t('trigger.fail'"), 'trigger.fail 需走 t()');
     assert.ok(script.includes("'-'"), 'trigger.fail 的 msg 需有 - 兜底');
+    assert.ok(script.includes('data = d; render(d)'), 'refresh 必须回写全局 data');
+    assert.ok(script.includes("el('trigger-result')") && script.includes("tres.textContent = ''"), '切换语言需清空 #trigger-result 残留旧语言');
+    assert.ok(script.includes('aria-label') && script.includes('ui.lang'), '语言切换按钮需带 aria-label（ui.lang）');
 
     // en 页服务端区无中文。lang-toggle 按钮文本按设计就是「中文」（en 页点击切回中文，用例25 已锁该文本），
-    // 属切换控件自身标签而非未翻译残留，故断言前先剔除该按钮再测 CJK。
+    // 属切换控件自身标签而非未翻译残留，故断言前先剔除该按钮再测 CJK（含全角标点）。
     const serverPart = en.split('<script>')[0].replace(/<button id="lang-toggle"[^>]*>[^<]*<\/button>/, '');
-    assert.equal(/[\u4e00-\u9fff]/.test(serverPart), false);
+    assert.equal(/[\u4e00-\u9fff\u3000-\u303f\uff00-\uffef]/.test(serverPart), false);
 
     // 表头 key 由服务端 data-i18n 属性承载、客户端遍历回写 textContent（不存在 t('<key>' 字面形态）
     for (const key of ['runs.col.time', 'runs.col.trigger', 'runs.col.desiredMode', 'runs.col.inWindow', 'runs.col.action', 'runs.col.availability', 'runs.col.changes', 'runs.col.duration', 'runs.col.exit', 'hist.col.mode', 'hist.col.reason', 'hist.col.agents', 'dw.col.days', 'dw.col.from', 'dw.col.to']) {
