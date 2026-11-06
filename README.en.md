@@ -68,7 +68,7 @@ node install.mjs
 
 ## Dashboard
 
-An optional local, read-only web dashboard that shows at a glance the current mode, availability, recent runs, switch history, and a config summary, and lets you manually trigger one `apply --if-due`.
+An optional local web dashboard that shows at a glance the current mode, availability, recent runs, switch history, and a config summary, lets you edit the **switch agents** and **target model** with dropdowns, and lets you manually trigger one `apply --if-due`.
 
 ```bash
 npm run dashboard        # or: node dashboard.mjs --port <n>
@@ -76,10 +76,12 @@ npm run dashboard        # or: node dashboard.mjs --port <n>
 
 Once started, open **http://127.0.0.1:8787** in your browser. Note: it does **not** open a browser automatically — type the address above into your browser's address bar.
 
-The page shows: current mode, availability, recent runs (up to 10), switch history (up to 10), a config summary, and a manual trigger button.
+The page shows: current mode, availability, recent runs (up to 10), switch history (up to 10), the switch-agents/settings block, a config summary, and a manual trigger button.
 
 The top-right button toggles the page between Chinese and English; the choice is saved in the browser's localStorage.
 
+- The switch-settings block is dropdown-only, with **no manual typing**: agents come from `~/.zcode/agents/*.md` (custom) plus the builtin list in `agents-state.json` (multi-select); the target model is a cascading provider → model → reasoning-level select backed by `~/.zcode/v2/config.json`. Every page load pre-fills the current `schedule.json` values.
+- Saving writes `schedule.json` atomically (other fields and file mode preserved) and validates provider/model/level against the registry. If the tool is already in target mode (night/weekend), saving immediately runs `apply --force` to rewrite the agents; otherwise the new target applies at the next window switch.
 - The manual trigger button is equivalent to `node apply.mjs --if-due --trigger dashboard`; it is idempotent (only acts when a mode change is actually due) and offers no forced override.
 - It listens only on the loopback interface (`127.0.0.1`), with no authentication and no HTTPS.
 - If port 8787 is already in use, startup fails with an error; pass `--port <n>` to use a different port.
@@ -93,7 +95,7 @@ The config file is `schedule.json` in the project root (see `schedule.example.js
 | `timezone` | string | IANA timezone used to evaluate the schedule, e.g. `"Asia/Shanghai"`. |
 | `target.providerId` | string | Provider ID to switch to, e.g. `"account:your-plan-provider"`. Must exist in `~/.zcode/v2/config.json`. |
 | `target.modelId` | string | Model ID to switch to. Must be offered by that provider (or exist globally for `account:*` aliases). |
-| `target.reasoningLevel` | string | One of `low`, `medium`, `high`, `xhigh`, `max`; must be supported by the target model. |
+| `target.reasoningLevel` | string | One of `low`, `medium`, `high`, `xhigh`, `max`; must be supported by the target model. If `config.json` declares no reasoning levels for that model (no `reasoning` field), the value is validated against that enumeration instead. |
 | `agents` | array | Agents to manage. Each entry: `{ "name": "...", "kind": "builtin" \| "custom", "path": "..." }`. |
 | `agents[].kind` | string | `builtin` — a ZCode builtin agent (switched via `agents-state.json`). `custom` — your own agent `.md` file (frontmatter lines rewritten). |
 | `agents[].path` | string | Custom agents only. Path to the `.md` file; `~` is expanded. Defaults to `~/.zcode/agents/<name>.md`. |

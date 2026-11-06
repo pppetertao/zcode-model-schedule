@@ -15,7 +15,9 @@ import {
   buildDashboardData,
   renderDashboardPage,
 } from '../lib/dashboard.mjs';
-import { createRequestHandler, runApplyIfDue, startServer } from '../dashboard.mjs';
+import { createRequestHandler, runApplyIfDue, runApplyForceRewrite, startServer } from '../dashboard.mjs';
+import { loadSchedule } from '../lib/config.mjs';
+import { buildAgentOptions, buildTargetOptions } from '../lib/options.mjs';
 import { MESSAGES, t, resolveLang, LOCALES, LANG_KEYS } from '../lib/i18n.mjs';
 
 const TZ = 'Asia/Shanghai';
@@ -462,13 +464,16 @@ describe('i18n', () => {
     'ui.toggleEn', 'ui.toggleZh', 'ui.lang',
     'sec.currentMode', 'sec.availability', 'sec.recentRuns', 'sec.switchHistory', 'sec.configSummary', 'sec.manualTrigger',
     'config.details',
+    // dashboard 设置区块（切换对象 + 切换目标）
+    'sec.settings', 'settings.agents', 'settings.provider', 'settings.model', 'settings.level',
+    'settings.save', 'settings.saved', 'settings.savedReapplyFail', 'settings.invalid', 'settings.network',
   ];
 
   test('用例22 MESSAGES zh/en key 对等、无空值、覆盖 spec 全部 55 key', () => {
     const zhKeys = Object.keys(MESSAGES.zh);
     const enKeys = Object.keys(MESSAGES.en);
     assert.deepEqual([...enKeys].sort(), [...zhKeys].sort()); // 单侧漏/多 key 即红
-    assert.equal(SPEC_KEYS.length, 55); // 本数组自身抄录完整性自检
+    assert.equal(SPEC_KEYS.length, 65); // 本数组自身抄录完整性自检（55 + 设置区块 10）
     for (const k of SPEC_KEYS) {
       assert.ok(k in MESSAGES.zh, `zh 缺 key ${k}`); // 双侧同漏即红
       assert.ok(k in MESSAGES.en, `en 缺 key ${k}`);
@@ -669,5 +674,277 @@ describe('dashboard HTTP lang', () => {
         await new Promise((resolve) => server.close(resolve)); // try/finally 兜底 close，禁止挂起
       }
     }
+  });
+});
+// ===== 设置区块追加（用例 32-38）：切换对象/目标下拉 + POST /api/settings =====
+// 下拉候选全部由服务端注入（models/agents），保存走原子写 schedule.json；
+// 已在 target 模式时保存后立即 --force 重写各 agent。
+
+function testRegistry() {
+  return new Map([
+    ['magpie', new Map([
+      ['group/glm-5.3-flash-trial', new Set(['low', 'high', 'max'])],
+      ['group/flash', new Set(['low', 'high', 'max'])],
+    ])],
+    ['account:bigmodel-start-plan', new Map([['GLM-5.3-Flash', new Set(['low', 'max'])]])],
+  ]);
+}
+
+function settingsDeps(paths, overrides = {}) {
+  return httpDeps(paths, {
+    loadRegistry: () => testRegistry(),
+    loadTargetOptions: () => [
+      {
+        providerId: 'magpie',
+        models: [
+          { modelId: 'group/glm-5.3-flash-trial', levels: ['low', 'high', 'max'] },
+          { modelId: 'group/flash', levels: ['low', 'high', 'max'] },
+        ],
+      },
+      { providerId: 'account:bigmodel-start-plan', models: [{ modelId: 'GLM-5.3-Flash', levels: ['low', 'max'] }] },
+    ],
+    loadAgentOptions: () => [
+      { name: 'Explore', kind: 'builtin' },
+      { name: 'general-purpose', kind: 'builtin' },
+      { name: 'implementer', kind: 'custom' },
+      { name: 'vision', kind: 'custom' },
+    ],
+    spawnForceApply: async () => ({ ok: true, exitCode: 0, stdout: '', stderr: '' }),
+    ...overrides,
+  });
+}
+
+function mockReq(method, target, body) {
+  const req = {
+    method,
+    url: target,
+    listeners: {},
+    on(evt, fn) {
+      (this.listeners[evt] || (this.listeners[evt] = [])).push(fn);
+      return this;
+    },
+  };
+  queueMicrotask(() => {
+    if (body !== undefined) for (const fn of req.listeners.data || []) fn(Buffer.from(body));
+    for (const fn of req.listeners.end || []) fn();
+  });
+  return req;
+}
+
+async function fireBody(handler, method, target, body) {
+  const res = mockRes();
+  await handler(mockReq(method, target, body), res);
+  return res;
+}
+
+describe('设置区块候选与渲染', () => {
+  test('用例32 下拉候选：未注入时回退当前 target/agents；注入时补齐当前 target 与 schedule agents', () => {
+    const dir = makeTmpDir('options-fallback');
+    const paths = writeFullFixtures(dir);
+    const d = buildDashboardData({ ...paths, now: NOW_IN_WINDOW });
+    assert.deepEqual(d.targetOptions, [{
+      providerId: 'account:bigmodel-start-plan',
+      models: [{ modelId: 'GLM-5.3-Flash', levels: ['max'] }],
+    }]);
+    assert.deepEqual(d.agentOptions, [{ name: 'Explore', kind: 'builtin' }]);
+
+    const injected = buildDashboardData({
+      ...paths,
+      targetOptions: [{ providerId: 'magpie', models: [{ modelId: 'group/glm-5.3-flash-trial', levels: ['low', 'high', 'max'] }] }],
+      agentOptions: [{ name: 'implementer', kind: 'custom' }],
+      now: NOW_IN_WINDOW,
+    });
+    assert.deepEqual(injected.targetOptions.map((p) => p.providerId), ['magpie', 'account:bigmodel-start-plan']); // 当前 target 必在候选
+    assert.deepEqual(injected.targetOptions[1].models, [{ modelId: 'GLM-5.3-Flash', levels: ['max'] }]);
+    assert.deepEqual(injected.agentOptions, [
+      { name: 'implementer', kind: 'custom' },
+      { name: 'Explore', kind: 'builtin' },
+    ]);
+  });
+
+  test('用例33 页面打开时按 schedule 回填：三个下拉 selected 当前 target、agents 多选回填；设置卡无 input（不可手输）', () => {
+    const dir = makeTmpDir('render-settings');
+    const html = renderDashboardPage(buildDashboardData({ ...writeFullFixtures(dir), now: NOW_IN_WINDOW }));
+    const start = html.indexOf('<div class="card" id="settings">');
+    const end = html.indexOf('<h2 data-i18n="sec.configSummary">');
+    assert.ok(start !== -1 && end > start, '设置卡片未渲染');
+    const card = html.slice(start, end);
+    assert.equal(card.includes('<input'), false); // 只能下拉，不能手输
+    assert.ok(card.includes('id="settings-agents"') && card.includes('multiple'));
+    assert.ok(card.includes('<option value="account:bigmodel-start-plan" selected>'));
+    assert.ok(card.includes('<option value="GLM-5.3-Flash" selected>'));
+    assert.ok(card.includes('<option value="max" selected>'));
+    assert.ok(card.includes('<option value="Explore" selected>Explore (builtin)</option>'));
+    assert.ok(html.includes("fetch('/api/settings'"));
+    assert.ok(html.includes('id="settings-save"'));
+  });
+});
+
+describe('POST /api/settings', () => {
+  test('用例34 保存成功 → 200；target+agents 原子写入，其余字段与文件 mode 保留；输入 trim + 去重保序', async () => {
+    const dir = makeTmpDir('settings-ok');
+    const paths = writeFullFixtures(dir);
+    fs.chmodSync(paths.configPath, 0o600);
+    const handler = createRequestHandler(settingsDeps(paths));
+    const res = await fireBody(handler, 'POST', '/api/settings', JSON.stringify({
+      target: { providerId: ' magpie ', modelId: ' group/glm-5.3-flash-trial ', reasoningLevel: 'max' },
+      agents: ['Explore', 'implementer', 'Explore'],
+    }));
+    assert.equal(res.statusCode, 200);
+    const body = JSON.parse(res.body);
+    assert.equal(body.ok, true);
+    assert.deepEqual(body.target, { providerId: 'magpie', modelId: 'group/glm-5.3-flash-trial', reasoningLevel: 'max' });
+    assert.deepEqual(body.agents, [{ name: 'Explore', kind: 'builtin' }, { name: 'implementer', kind: 'custom' }]);
+    assert.equal(body.reapply, null); // 白日窗 + state.mode=target → desiredMode=original，不触发重写
+
+    const saved = loadSchedule(paths.configPath);
+    assert.deepEqual(saved.target, body.target);
+    assert.deepEqual(saved.agents, body.agents);
+    assert.equal(saved.timezone, TZ);
+    assert.deepEqual(saved.dayWindows, [{ days: [1, 2, 3, 4, 5], from: '08:50', to: '23:10' }]);
+    assert.equal(saved.availability.enabled, false);
+    assert.equal(fs.statSync(paths.configPath).mode & 0o777, 0o600);
+  });
+
+  test('用例35 保存 agents 时保留已有 custom agent 的显式 path', async () => {
+    const dir = makeTmpDir('settings-path');
+    const paths = writeFullFixtures(dir);
+    fs.writeFileSync(paths.configPath, JSON.stringify(baseSchedule({
+      agents: [
+        { name: 'implementer', kind: 'custom', path: '~/.zcode/agents/implementer.md' },
+        { name: 'Explore', kind: 'builtin' },
+      ],
+    })));
+    const res = await fireBody(createRequestHandler(settingsDeps(paths)), 'POST', '/api/settings', JSON.stringify({
+      target: { providerId: 'magpie', modelId: 'group/glm-5.3-flash-trial', reasoningLevel: 'max' },
+      agents: ['implementer'],
+    }));
+    assert.equal(res.statusCode, 200);
+    assert.deepEqual(loadSchedule(paths.configPath).agents, [
+      { name: 'implementer', kind: 'custom', path: '~/.zcode/agents/implementer.md' },
+    ]);
+  });
+
+  test('用例36 校验失败 → 400 且文件不变：形状/注册表/档位/未知 agent/空 agents/坏 JSON/非对象体', async () => {
+    const dir = makeTmpDir('settings-invalid');
+    const paths = writeFullFixtures(dir);
+    const original = fs.readFileSync(paths.configPath, 'utf8');
+    const handler = createRequestHandler(settingsDeps(paths));
+    const cases = [
+      [{ target: { providerId: 'magpie', modelId: '', reasoningLevel: 'max' }, agents: ['Explore'] }, /modelId/],
+      [{ target: { providerId: 'magpie', modelId: 'group/nope', reasoningLevel: 'max' }, agents: ['Explore'] }, /不在 provider/],
+      [{ target: { providerId: 'magpie', modelId: 'group/flash', reasoningLevel: 'medium' }, agents: ['Explore'] }, /reasoningLevel/],
+      [{ target: { providerId: 'magpie', modelId: 'group/flash', reasoningLevel: 'max' }, agents: ['ghost'] }, /ghost/],
+      [{ target: { providerId: 'magpie', modelId: 'group/flash', reasoningLevel: 'max' }, agents: [] }, /至少选择/],
+    ];
+    for (const [payload, re] of cases) {
+      const res = await fireBody(handler, 'POST', '/api/settings', JSON.stringify(payload));
+      assert.equal(res.statusCode, 400, JSON.stringify(payload));
+      const body = JSON.parse(res.body);
+      assert.equal(body.ok, false);
+      assert.match(body.errors.map((e) => e.reason).join('; '), re);
+    }
+    const badJson = await fireBody(handler, 'POST', '/api/settings', '{oops');
+    assert.equal(badJson.statusCode, 400);
+    assert.match(JSON.parse(badJson.body).errors[0].reason, /JSON 解析失败/);
+    const notObject = await fireBody(handler, 'POST', '/api/settings', '[1,2]');
+    assert.equal(notObject.statusCode, 400);
+    assert.equal(fs.readFileSync(paths.configPath, 'utf8'), original); // 校验失败绝不落盘
+  });
+
+  test('用例37 GET /api/settings → 405 Allow POST；请求体超 16KB → 413', async () => {
+    const dir = makeTmpDir('settings-method');
+    const handler = createRequestHandler(settingsDeps(writeFullFixtures(dir)));
+    const r405 = await fireBody(handler, 'GET', '/api/settings');
+    assert.equal(r405.statusCode, 405);
+    assert.equal(r405.headers.Allow, 'POST');
+    const big = JSON.stringify({
+      target: { providerId: 'magpie', modelId: 'group/flash', reasoningLevel: 'max' },
+      agents: ['Explore'],
+      pad: 'x'.repeat(17000),
+    });
+    const r413 = await fireBody(handler, 'POST', '/api/settings', big);
+    assert.equal(r413.statusCode, 413);
+  });
+
+  test('用例38 已处于 target 模式且 target 窗 → 保存后调用 --force 重写并回传 reapply', async () => {
+    const dir = makeTmpDir('settings-reapply');
+    const paths = writeFullFixtures(dir);
+    let calls = 0;
+    const handler = createRequestHandler(settingsDeps(paths, {
+      now: () => new Date('2026-11-03T23:30:00+08:00'), // 周二 23:30，to=23:10 已过 → desiredMode target
+      spawnForceApply: async () => {
+        calls += 1;
+        return { ok: true, exitCode: 0, stdout: 'no change (--force rewrite done)', stderr: '' };
+      },
+    }));
+    const res = await fireBody(handler, 'POST', '/api/settings', JSON.stringify({
+      target: { providerId: 'magpie', modelId: 'group/glm-5.3-flash-trial', reasoningLevel: 'max' },
+      agents: ['Explore'],
+    }));
+    assert.equal(res.statusCode, 200);
+    assert.equal(calls, 1);
+    assert.deepEqual(JSON.parse(res.body).reapply, { ok: true, exitCode: 0, stdout: 'no change (--force rewrite done)', stderr: '' });
+  });
+});
+
+describe('runApplyForceRewrite', () => {
+  test('用例39 参数固定为 --force --trigger dashboard', async () => {
+    let seen;
+    const impl = (file, args, opts, cb) => {
+      seen = args;
+      cb(null, '', '');
+    };
+    const r = await runApplyForceRewrite({ toolDir: '/tmp/tool', execFileImpl: impl });
+    assert.deepEqual(seen, ['/tmp/tool/apply.mjs', '--force', '--trigger', 'dashboard']);
+    assert.deepEqual(r, { ok: true, exitCode: 0, stdout: '', stderr: '' });
+  });
+});
+
+describe('下拉候选来源 lib/options.mjs', () => {
+  test('用例40 buildTargetOptions：未声明档位的模型回退 THOUGHT_LEVELS；无模型的 provider 跳过；读不到 → []', () => {
+    const dir = makeTmpDir('target-options');
+    const registryPath = path.join(dir, 'config.json');
+    fs.writeFileSync(registryPath, JSON.stringify({
+      provider: {
+        magpie: {
+          models: {
+            'group/trial': { name: 'Trial' }, // 无 reasoning 字段
+            'group/flash': { reasoning: { levels: ['low', 'high', 'max'] } },
+          },
+        },
+        'builtin:empty': { models: {} },
+      },
+    }));
+    assert.deepEqual(buildTargetOptions(registryPath), [{
+      providerId: 'magpie',
+      models: [
+        { modelId: 'group/trial', levels: ['low', 'medium', 'high', 'xhigh', 'max'] },
+        { modelId: 'group/flash', levels: ['low', 'high', 'max'] },
+      ],
+    }]);
+    assert.deepEqual(buildTargetOptions(path.join(dir, 'nope.json')), []); // 读不到 → 空候选（调用方回退当前 target）
+  });
+
+  test('用例41 buildAgentOptions：custom 来自 *.md，builtin 来自 agents-state override key，去重排序；来源缺失只跳过该来源', () => {
+    const dir = makeTmpDir('agent-options');
+    const agentsDir = path.join(dir, 'agents');
+    fs.mkdirSync(agentsDir);
+    fs.writeFileSync(path.join(agentsDir, 'implementer.md'), '---\nmodel: x\n---\n');
+    fs.writeFileSync(path.join(agentsDir, 'notes.txt'), 'x'); // 非 .md 不入选项
+    const agentsStatePath = path.join(dir, 'agents-state.json');
+    fs.writeFileSync(agentsStatePath, JSON.stringify({
+      builtInModelOverrides: { Explore: {} },
+      builtInModelSelectionOverrides: { 'general-purpose': {}, Explore: {} },
+    }));
+    assert.deepEqual(buildAgentOptions({ agentsDir, agentsStatePath }), [
+      { name: 'Explore', kind: 'builtin' },
+      { name: 'general-purpose', kind: 'builtin' },
+      { name: 'implementer', kind: 'custom' },
+    ]);
+    assert.deepEqual(buildAgentOptions({
+      agentsDir: path.join(dir, 'nope'),
+      agentsStatePath: path.join(dir, 'nope.json'),
+    }), []);
   });
 });

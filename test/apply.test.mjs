@@ -250,6 +250,16 @@ describe('validateSchedule', () => {
     assert.match(errors[0].reason, /reasoningLevel/);
   });
 
+  test('模型未声明 reasoning 档位（levels 空）→ 按 THOUGHT_LEVELS 枚举放行，非法档位仍拒绝', () => {
+    const emptyLevels = makeRegistry({ magpie: { 'group/trial': [] } });
+    const ok = baseSchedule({ target: { providerId: 'magpie', modelId: 'group/trial', reasoningLevel: 'max' } });
+    assert.equal(validateSchedule(ok, emptyLevels).valid, true);
+    const bad = baseSchedule({ target: { providerId: 'magpie', modelId: 'group/trial', reasoningLevel: 'ultra' } });
+    const { valid, errors } = validateSchedule(bad, emptyLevels);
+    assert.equal(valid, false);
+    assert.match(errors[0].reason, /ultra/);
+  });
+
   test('account: 前缀 provider 不在 registry 且 modelId 全局存在 → 通过', () => {
     const dir = makeTmpDir('valid');
     const mdPath = writeAgentMd(dir);

@@ -11,6 +11,8 @@ import { execFile } from 'node:child_process';
 import { DASH_SCHEMA, buildDashboardData, readJsonlLinesLocal, renderDashboardPage } from './lib/dashboard.mjs';
 import { readRunLogs } from './lib/run-log.mjs';
 import { resolveLang } from './lib/i18n.mjs';
+import { THOUGHT_LEVELS, loadModelRegistry, saveScheduleSettings, validateTarget, validateTargetShape } from './lib/config.mjs';
+import { buildAgentOptions, buildTargetOptions } from './lib/options.mjs';
 
 const TOOL_DIR = path.dirname(fileURLToPath(import.meta.url));
 const DEFAULT_CONFIG = path.join(TOOL_DIR, 'schedule.json');
@@ -54,12 +56,12 @@ export function parseArgs(argv = []) {
   return opts;
 }
 
-// runApplyIfDue — spawn node <toolDir>/apply.mjs --if-due --trigger dashboard；永不 reject，结果全部落 {ok,...}
-export function runApplyIfDue({ toolDir, execFileImpl = execFile, timeoutMs = 60000 }) {
+// runApply — spawn node <toolDir>/apply.mjs <args>；永不 reject，结果全部落 {ok,...}
+function runApply({ toolDir, args, execFileImpl = execFile, timeoutMs = 60000 }) {
   return new Promise((resolve) => {
     execFileImpl(
       process.execPath,
-      [path.join(toolDir, 'apply.mjs'), '--if-due', '--trigger', 'dashboard'],
+      [path.join(toolDir, 'apply.mjs'), ...args],
       { cwd: toolDir, timeout: timeoutMs, maxBuffer: 1048576 },
       (err, stdout, stderr) => {
         if (err) {
@@ -72,14 +74,92 @@ export function runApplyIfDue({ toolDir, execFileImpl = execFile, timeoutMs = 60
   });
 }
 
-// createRequestHandler — 全依赖注入；deps = {configPath, statePath, historyPath, runLogPath, now, spawnTrigger}
+// runApplyIfDue — 幂等触发：仅在模式真正需要改变时执行
+export function runApplyIfDue(opts = {}) {
+  return runApply({ ...opts, args: ['--if-due', '--trigger', 'dashboard'] });
+}
+
+// runApplyForceRewrite — 保存设置后若已处于 target 模式：用 --force 立即把新目标重写到各 agent
+export function runApplyForceRewrite(opts = {}) {
+  return runApply({ ...opts, args: ['--force', '--trigger', 'dashboard'] });
+}
+
+const MAX_BODY_BYTES = 16 * 1024;
+
+// readBody — 读取请求体（上限 16KB）；超限 reject { code: 'BODY_TOO_LARGE' }
+function readBody(req, limit = MAX_BODY_BYTES) {
+  return new Promise((resolve, reject) => {
+    const chunks = [];
+    let size = 0;
+    let settled = false;
+    req.on('data', (chunk) => {
+      if (settled) return;
+      size += chunk.length;
+      if (size > limit) {
+        settled = true;
+        reject(Object.assign(new Error('请求体过大'), { code: 'BODY_TOO_LARGE' }));
+        return;
+      }
+      chunks.push(chunk);
+    });
+    req.on('end', () => {
+      if (settled) return;
+      settled = true;
+      resolve(Buffer.concat(chunks).toString('utf8'));
+    });
+    req.on('error', (err) => {
+      if (settled) return;
+      settled = true;
+      reject(err);
+    });
+  });
+}
+
+function normalizeTargetInput(raw) {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return raw;
+  const trim = (v) => (typeof v === 'string' ? v.trim() : v);
+  return {
+    providerId: trim(raw.providerId),
+    modelId: trim(raw.modelId),
+    reasoningLevel: trim(raw.reasoningLevel),
+  };
+}
+
+// 返回去重保序的名字数组；形状非法返回 null
+function normalizeAgentNames(raw) {
+  if (!Array.isArray(raw)) return null;
+  const names = [];
+  for (const value of raw) {
+    if (typeof value !== 'string') return null;
+    const name = value.trim();
+    if (name.length === 0) return null;
+    if (!names.includes(name)) names.push(name);
+  }
+  return names;
+}
+
+// createRequestHandler — 全依赖注入；
+// deps = {configPath, statePath, historyPath, runLogPath, now, spawnTrigger,
+//         loadRegistry, loadTargetOptions, loadAgentOptions, spawnForceApply}
 export function createRequestHandler(deps) {
   let triggerInFlight = false;
+  // 下拉选项构建失败只降级为空候选（调用方回退当前配置），不影响其余区块
+  const safeOptions = (fn) => {
+    if (typeof fn !== 'function') return null;
+    try {
+      return fn();
+    } catch (err) {
+      console.error(`[warn] 构建下拉选项失败: ${err?.message ?? err}`);
+      return null;
+    }
+  };
   const data = () => buildDashboardData({
     configPath: deps.configPath,
     statePath: deps.statePath,
     historyPath: deps.historyPath,
     runLogPath: deps.runLogPath,
+    targetOptions: safeOptions(deps.loadTargetOptions),
+    agentOptions: safeOptions(deps.loadAgentOptions),
     now: deps.now(),
   });
   const sendJson = (res, status, body, extraHeaders = {}) => {
@@ -143,6 +223,73 @@ export function createRequestHandler(deps) {
         }
         return;
       }
+      if (pathname === '/api/settings') {
+        if (req.method !== 'POST') return sendJson(res, 405, { error: 'method-not-allowed' }, { Allow: 'POST' });
+        let raw;
+        try {
+          raw = await readBody(req);
+        } catch (err) {
+          if (err.code === 'BODY_TOO_LARGE') {
+            return sendJson(res, 413, { ok: false, errors: [{ scope: 'body', reason: `请求体超过 ${MAX_BODY_BYTES} 字节` }] });
+          }
+          throw err;
+        }
+        let input;
+        try {
+          input = JSON.parse(raw);
+        } catch (err) {
+          return sendJson(res, 400, { ok: false, errors: [{ scope: 'body', reason: `JSON 解析失败：${err.message}` }] });
+        }
+        if (!input || typeof input !== 'object' || Array.isArray(input)) {
+          return sendJson(res, 400, { ok: false, errors: [{ scope: 'body', reason: '请求体必须为对象' }] });
+        }
+
+        const target = normalizeTargetInput(input.target);
+        const errors = validateTargetShape(target);
+        if (errors.length === 0) {
+          let registry = null;
+          try {
+            registry = typeof deps.loadRegistry === 'function' ? deps.loadRegistry() : null;
+          } catch (err) {
+            // 吞掉注册表读失败（缺失/损坏）：降级为档位枚举校验；apply 执行时仍按注册表硬校验
+            console.error(`[warn] dashboard 读取模型注册表失败，跳过注册表校验: ${err?.message ?? err}`);
+          }
+          if (registry) errors.push(...validateTarget(target, registry));
+          else if (!THOUGHT_LEVELS.includes(target.reasoningLevel)) {
+            errors.push({ scope: 'target.reasoningLevel', reason: `reasoningLevel 必须 ∈ ${THOUGHT_LEVELS.join('/')}` });
+          }
+        }
+
+        const before = await data();
+        const agentKinds = new Map((before.agentOptions ?? []).map((a) => [a.name, a.kind]));
+        const names = normalizeAgentNames(input.agents);
+        if (names === null) {
+          errors.push({ scope: 'agents', reason: 'agents 必须为非空字符串数组' });
+        } else if (names.length === 0) {
+          errors.push({ scope: 'agents', reason: '至少选择一个切换对象' });
+        } else {
+          for (const name of names) {
+            if (!agentKinds.has(name)) errors.push({ scope: 'agents', reason: `"${name}" 不在可用 agent 列表` });
+          }
+        }
+        if (errors.length > 0) return sendJson(res, 400, { ok: false, errors });
+
+        const agents = names.map((name) => ({ name, kind: agentKinds.get(name) }));
+        try {
+          saveScheduleSettings(deps.configPath, { target, agents });
+        } catch (err) {
+          console.error(`[error] dashboard 写入 schedule 失败: ${err.message}`);
+          return sendJson(res, 500, { ok: false, errors: [{ scope: 'config', reason: err.message }] });
+        }
+        // 已处于 target 模式：新目标不会等下次窗口切换，立即 --force 重写
+        const after = await data();
+        let reapply = null;
+        if (typeof deps.spawnForceApply === 'function' && after.state?.mode === 'target' && after.desiredMode === 'target') {
+          reapply = await deps.spawnForceApply();
+        }
+        sendJson(res, 200, { ok: true, target, agents, reapply });
+        return;
+      }
       return sendJson(res, 404, { error: 'not-found' });
     } catch (err) {
       console.error(`[error] dashboard handler: ${err?.message ?? err}`);
@@ -175,6 +322,10 @@ async function main() {
       runLogPath: RUN_LOG_PATH,
       now: () => new Date(),
       spawnTrigger: () => runApplyIfDue({ toolDir: TOOL_DIR }),
+      spawnForceApply: () => runApplyForceRewrite({ toolDir: TOOL_DIR }),
+      loadRegistry: () => loadModelRegistry(),
+      loadTargetOptions: () => buildTargetOptions(),
+      loadAgentOptions: () => buildAgentOptions(),
     }),
     port: opts.port,
   });

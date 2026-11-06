@@ -68,7 +68,7 @@ node install.mjs
 
 ## Dashboard
 
-一个可选的本地只读 web dashboard，让你一眼看到当前模式、可用性、最近运行、切换历史、配置摘要，并支持手动触发一次 `apply --if-due`。
+一个可选的本地 web dashboard：一眼看到当前模式、可用性、最近运行、切换历史、配置摘要，在页面上用下拉框修改**切换对象（agents）**与**切换目标模型**，并支持手动触发一次 `apply --if-due`。
 
 ```bash
 npm run dashboard        # 或：node dashboard.mjs --port <n>
@@ -76,10 +76,12 @@ npm run dashboard        # 或：node dashboard.mjs --port <n>
 
 启动后访问 **http://127.0.0.1:8787**。注意：**不会自动打开浏览器**，请在浏览器地址栏手动输入上面的地址。
 
-页面包含：当前模式、可用性、最近运行（最多 10 条）、切换历史（最多 10 条）、配置摘要、手动触发。
+页面包含：当前模式、可用性、最近运行（最多 10 条）、切换历史（最多 10 条）、切换对象与目标设置、配置摘要、手动触发。
 
 页面右上角可切换中/英文，选择会保存在浏览器 localStorage。
 
+- 「切换对象与目标」区块全部是下拉选择，**不支持手动输入**：切换对象来自 `~/.zcode/agents/*.md`（custom）与 `agents-state.json` 的 builtin 列表（可多选）；目标模型是 provider → model → 推理档位三级联动，候选来自 `~/.zcode/v2/config.json`。每次打开页面都按 `schedule.json` 的现值回填。
+- 保存会原子写入 `schedule.json`（保留其余字段与文件权限），并按注册表校验 provider/model/档位。若保存时已处于 target 模式（夜间/周末），会立即执行一次 `apply --force` 把新目标重写到各 agent；否则等到下一次窗口切换生效。
 - 手动触发按钮等价于 `node apply.mjs --if-due --trigger dashboard`，是幂等的（仅在模式真正需要改变时执行），不提供强制覆盖。
 - 仅监听本机 loopback（`127.0.0.1`），无认证、无 HTTPS。
 - 若端口 8787 已被占用，启动会报错退出；用 `--port <n>` 换一个端口即可。
@@ -102,7 +104,7 @@ npm run dashboard        # 或：node dashboard.mjs --port <n>
 | `timezone` | string | 用于评估日程的 IANA 时区，例如 `"Asia/Shanghai"`。 |
 | `target.providerId` | string | 要切换到的 Provider ID，例如 `"account:your-plan-provider"`。必须在 `~/.zcode/v2/config.json` 中存在。 |
 | `target.modelId` | string | 要切换到的 Model ID。必须由该 provider 提供（或全局存在于 `account:*` 别名中）。 |
-| `target.reasoningLevel` | string | 取值为 `low`、`medium`、`high`、`xhigh`、`max` 之一；必须被目标模型支持。 |
+| `target.reasoningLevel` | string | 取值为 `low`、`medium`、`high`、`xhigh`、`max` 之一；必须被目标模型支持。若 `config.json` 未给该模型声明档位（无 `reasoning` 字段），则按上述枚举校验。 |
 | `agents` | array | 要管理的 Agents。每项格式：`{ "name": "...", "kind": "builtin" \| "custom", "path": "..." }`。 |
 | `agents[].kind` | string | `builtin` — ZCode 内置 agent（通过 `agents-state.json` 切换）。`custom` — 你自己的 agent `.md` 文件（重写 frontmatter 行）。 |
 | `agents[].path` | string | 仅自定义 agents。`.md` 文件路径；`~` 会被展开。默认为 `~/.zcode/agents/<name>.md`。 |
